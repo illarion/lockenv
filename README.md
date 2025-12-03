@@ -103,14 +103,30 @@ removed: .env
 locked: 1 files into .lockenv
 ```
 
-### `lockenv unlock`
+### `lockenv unlock [file...]`
 Decrypts and restores files from the vault with smart conflict resolution.
 
 ```bash
+# Unlock all files
 $ lockenv unlock
 Enter password:
 unlocked: .env
 unlocked: config/database.yml
+
+unlocked: 2 files
+
+# Unlock specific file
+$ lockenv unlock .env
+Enter password:
+unlocked: .env
+
+unlocked: 1 files
+
+# Unlock files matching pattern
+$ lockenv unlock "config/*.env"
+Enter password:
+unlocked: config/dev.env
+unlocked: config/prod.env
 
 unlocked: 2 files
 ```

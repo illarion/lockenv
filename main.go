@@ -93,7 +93,7 @@ func runUnlock(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	cmd.Unlock(ctx, *force, *keepLocal, *keepBoth)
+	cmd.Unlock(ctx, fs.Args(), *force, *keepLocal, *keepBoth)
 }
 
 func runRm(ctx context.Context, args []string) {
@@ -213,9 +213,11 @@ func printCommandHelp(command string) {
 		fmt.Println("  lockenv lock .env --remove       # Lock and remove original")
 		fmt.Println("  lockenv lock \"config/*.secret\"   # Lock multiple files with glob")
 	case "unlock":
-		fmt.Println("lockenv unlock [--force|--keep-local|--keep-both]")
+		fmt.Println("lockenv unlock [--force|--keep-local|--keep-both] [<file> [file...]]")
 		fmt.Println()
 		fmt.Println("Decrypts and restores files from the vault.")
+		fmt.Println("When run without file arguments, unlocks all files.")
+		fmt.Println("Supports glob patterns for specific files.")
 		fmt.Println("Smart conflict resolution for files that exist locally.")
 		fmt.Println()
 		fmt.Println("Flags:")
@@ -233,7 +235,9 @@ func printCommandHelp(command string) {
 		fmt.Println("    [x] Skip this file")
 		fmt.Println()
 		fmt.Println("Examples:")
-		fmt.Println("  lockenv unlock                   # Interactive mode")
+		fmt.Println("  lockenv unlock                   # Unlock all files")
+		fmt.Println("  lockenv unlock .env              # Unlock specific file")
+		fmt.Println("  lockenv unlock \"*.env\"           # Unlock files matching pattern")
 		fmt.Println("  lockenv unlock --force           # Overwrite all")
 		fmt.Println("  lockenv unlock --keep-both       # Keep both for all conflicts")
 	case "rm":

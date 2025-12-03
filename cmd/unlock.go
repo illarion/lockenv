@@ -10,7 +10,7 @@ import (
 )
 
 // Unlock extracts files from .lockenv with smart conflict resolution
-func Unlock(ctx context.Context, force bool, keepLocal bool, keepBoth bool) {
+func Unlock(ctx context.Context, patterns []string, force bool, keepLocal bool, keepBoth bool) {
 	// Validate mutually exclusive flags
 	flagCount := boolToInt(force) + boolToInt(keepLocal) + boolToInt(keepBoth)
 	if flagCount > 1 {
@@ -42,7 +42,7 @@ func Unlock(ctx context.Context, force bool, keepLocal bool, keepBoth bool) {
 	}
 
 	// Unlock files with smart merge
-	result, err := lockenv.Unlock(ctx, password, strategy)
+	result, err := lockenv.Unlock(ctx, password, strategy, patterns)
 	if err != nil {
 		HandleError(err)
 	}

@@ -46,7 +46,7 @@ func TestUnlockSmart_NoConflicts(t *testing.T) {
 	}
 
 	// Unlock with StrategyUseVault
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestUnlockSmart_FilesIdentical(t *testing.T) {
 	}
 
 	// Unlock - files are identical to vault versions
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestUnlockSmart_StrategyKeepLocal(t *testing.T) {
 	}
 
 	// Unlock with StrategyKeepLocal
-	result, err := lockenv.Unlock(context.Background(), password, StrategyKeepLocal)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyKeepLocal, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestUnlockSmart_StrategyUseSealed(t *testing.T) {
 	}
 
 	// Unlock with StrategyUseVault
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestUnlockSmart_StrategyAbort(t *testing.T) {
 	}
 
 	// Unlock with StrategyAbort
-	result, err := lockenv.Unlock(context.Background(), password, StrategyAbort)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyAbort, nil)
 
 	// Should complete but skip conflicted file
 	if err != nil {
@@ -343,7 +343,7 @@ func TestUnlockSmart_MixedResults(t *testing.T) {
 	}
 
 	// Unlock with StrategyUseVault
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestUnlockSmart_DirectoryCreation(t *testing.T) {
 	}
 
 	// Unlock - should recreate directories
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}

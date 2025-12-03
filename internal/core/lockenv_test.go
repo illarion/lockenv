@@ -90,7 +90,7 @@ func TestTrackSealUnseal(t *testing.T) {
 	}
 
 	// Unlock files
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestWrongPassword(t *testing.T) {
 	}
 
 	// Try to unlock with wrong password
-	_, err = lockenv.Unlock(context.Background(), wrongPassword, StrategyUseVault)
+	_, err = lockenv.Unlock(context.Background(), wrongPassword, StrategyUseVault, nil)
 	if err != ErrWrongPassword {
 		t.Errorf("Expected ErrWrongPassword, got %v", err)
 	}
@@ -433,13 +433,13 @@ func TestChangePassword(t *testing.T) {
 	}
 
 	// Try to unlock with old password (should fail)
-	_, err = lockenv.Unlock(context.Background(), oldPassword, StrategyUseVault)
+	_, err = lockenv.Unlock(context.Background(), oldPassword, StrategyUseVault, nil)
 	if err != ErrWrongPassword {
 		t.Errorf("Expected ErrWrongPassword with old password, got %v", err)
 	}
 
 	// Unlock with new password
-	result, err := lockenv.Unlock(context.Background(), newPassword, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), newPassword, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart with new password failed: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestTrack_AllowsValidRelativePaths(t *testing.T) {
 		t.Fatalf("Seal failed: %v", err)
 	}
 
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -668,7 +668,7 @@ func TestUnlock_EnforcesSecureDirectoryPermissions(t *testing.T) {
 	os.RemoveAll(filepath.Join(dir, "secrets"))
 
 	// Unlock
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -729,7 +729,7 @@ func TestUnlock_MasksNonExecutableFilePermissions(t *testing.T) {
 	}
 
 	// Unlock
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -781,7 +781,7 @@ func TestUnlock_PreservesExecutableBitForOwnerOnly(t *testing.T) {
 	}
 
 	// Unlock
-	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyUseVault, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}
@@ -850,7 +850,7 @@ func TestUnlock_VaultCopyHasSecurePermissions(t *testing.T) {
 	}
 
 	// Unlock with KeepBoth strategy
-	result, err := lockenv.Unlock(context.Background(), password, StrategyKeepBoth)
+	result, err := lockenv.Unlock(context.Background(), password, StrategyKeepBoth, nil)
 	if err != nil {
 		t.Fatalf("UnlockSmart failed: %v", err)
 	}

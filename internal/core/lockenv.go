@@ -448,7 +448,8 @@ func (l *LockEnv) FinalizeLock(ctx context.Context, password []byte, remove bool
 }
 
 // Unlock extracts files with smart conflict resolution (implements `lockenv unlock`).
-func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStrategy) (*UnlockResult, error) {
+// If patterns is non-empty, only files matching the patterns are unlocked.
+func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStrategy, patterns []string) (*UnlockResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -476,8 +477,17 @@ func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStr
 	// Get repository root for path operations
 	repoRoot := filepath.Dir(l.path)
 
+	// Filter files if patterns provided
+	filesToUnlock := metadata.Files
+	if len(patterns) > 0 {
+		filesToUnlock = filterFilesByPatterns(metadata.Files, patterns)
+		if len(filesToUnlock) == 0 {
+			return nil, fmt.Errorf("no files match the specified patterns")
+		}
+	}
+
 	// Extract each file
-	for _, file := range metadata.Files {
+	for _, file := range filesToUnlock {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -683,6 +693,27 @@ func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStr
 	}
 
 	return result, nil
+}
+
+// filterFilesByPatterns filters files by patterns (exact match or glob)
+func filterFilesByPatterns(files []storage.FileEntry, patterns []string) []storage.FileEntry {
+	var result []storage.FileEntry
+	for _, file := range files {
+		for _, pattern := range patterns {
+			normalizedPattern := filepath.ToSlash(pattern)
+			// Direct match
+			if file.Path == normalizedPattern {
+				result = append(result, file)
+				break
+			}
+			// Glob match
+			if matched, _ := filepath.Match(normalizedPattern, file.Path); matched {
+				result = append(result, file)
+				break
+			}
+		}
+	}
+	return result
 }
 
 // RemoveFiles removes files from tracking with a password (implements `lockenv rm`).
