@@ -8,6 +8,39 @@ lockenv provides a secure way to store sensitive files (like `.env` files, confi
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap illarion/tap
+brew install lockenv
+```
+
+### Debian/Ubuntu
+
+Download the `.deb` file from the [latest release](https://github.com/illarion/lockenv/releases/latest):
+
+```bash
+sudo dpkg -i lockenv_*_linux_amd64.deb
+```
+
+### Fedora/RHEL
+
+Download the `.rpm` file from the [latest release](https://github.com/illarion/lockenv/releases/latest):
+
+```bash
+sudo rpm -i lockenv_*_linux_amd64.rpm
+```
+
+### Binary Download
+
+Download pre-built binaries from [GitHub Releases](https://github.com/illarion/lockenv/releases/latest).
+
+Available for:
+- Linux (amd64, arm64)
+- macOS (amd64, arm64)
+
+### Go Install
+
 ```bash
 go install github.com/illarion/lockenv@latest
 ```
@@ -140,7 +173,7 @@ Removes files from the vault. Supports glob patterns.
 ```bash
 $ lockenv rm config/dev.env
 Enter password:
-🗑️ Removed config/dev.env from vault
+removed: config/dev.env from vault
 ```
 
 ### `lockenv ls`
@@ -166,7 +199,7 @@ Vault Status
 Statistics:
    Files in vault: 3
    Total size:     2.17 KB
-   Last locked:    2024-01-15 10:30:45
+   Last locked:    2025-01-15 10:30:45
    Encryption:     AES-256-GCM (PBKDF2 iterations: 210000)
    Version:        1
 
@@ -214,6 +247,15 @@ File not in working directory: config/prod.env
 ```
 
 **Note:** `lockenv status` shows which files changed, `lockenv diff` shows what changed.
+
+### `lockenv compact`
+
+Compacts the vault database to reclaim unused disk space. Runs automatically after `rm` and `passwd`, but can be run manually.
+
+```bash
+$ lockenv compact
+Compacted: 45.2 KB -> 12.1 KB
+```
 
 ## Workflow Example
 
