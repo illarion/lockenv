@@ -22,10 +22,14 @@ lockenv/
 ├── main.go              # CLI entry point
 ├── cmd/                 # CLI command implementations
 │   ├── init.go
-│   ├── track.go
-│   ├── seal.go
-│   ├── unseal.go
-│   └── ...
+│   ├── lock.go
+│   ├── unlock.go
+│   ├── rm.go
+│   ├── ls.go
+│   ├── passwd.go
+│   ├── status.go
+│   ├── diff.go
+│   └── common.go
 ├── internal/
 │   ├── core/           # Core business logic
 │   │   ├── lockenv.go  # Main lockenv operations
@@ -46,29 +50,32 @@ Uses BBolt (etcd's fork of BoltDB) as an embedded key-value database.
 #### Database Structure
 ```
 .lockenv (BBolt database)
-├── meta bucket (unencrypted)
-│   ├── version     → "1"
-│   ├── created     → timestamp (binary)
-│   ├── modified    → timestamp (binary)
-│   ├── salt        → 32 bytes
-│   └── iterations  → uint32
-├── manifest bucket (unencrypted)
-│   └── [file_path] → ManifestEntry (JSON)
-├── files bucket (encrypted values)
-│   └── [file_path] → encrypted file content
-└── metadata bucket (encrypted)
-    ├── checksum    → encrypted password verification
-    └── files       → encrypted Metadata struct (JSON)
+├── config bucket (unencrypted)
+│   ├── version      → "1"
+│   ├── created      → timestamp (binary)
+│   ├── modified     → timestamp (binary)
+│   ├── salt         → 32 bytes
+│   └── iterations   → uint32
+├── index bucket (unencrypted)
+│   └── [file_path]  → ManifestEntry (JSON)
+├── blobs bucket (encrypted values)
+│   └── [file_path]  → encrypted file content
+└── private bucket (encrypted)
+    ├── checksum     → encrypted password verification
+    └── files        → encrypted Metadata struct (JSON)
 ```
 
 #### Key Types
 ```go
-// ManifestEntry - stored unencrypted for list/status commands
+// ManifestEntry - stored unencrypted in manifest bucket
 type ManifestEntry struct {
     Path    string    `json:"path"`
     Size    int64     `json:"size"`
     ModTime time.Time `json:"modTime"`
 }
+// ManifestEntry data is visible without password.
+// Anyone with repository read access can see file paths, sizes, and times
+// by running `lockenv ls` or `lockenv status`.
 
 // Metadata - stored encrypted with full file details
 type Metadata struct {
@@ -95,7 +102,7 @@ type FileEntry struct {
 ```go
 type KDF struct {
     Salt       []byte  // 32 bytes, randomly generated
-    Iterations int     // 100,000 (PBKDF2)
+    Iterations int     // 210,000 (PBKDF2)
 }
 
 func (k *KDF) DeriveKey(password []byte) []byte {
@@ -129,30 +136,23 @@ Main operations flow:
 7. Create empty metadata
 ```
 
-#### Track
+#### Lock
 ```
 1. Open database and verify password
 2. Read current metadata (encrypted)
 3. Add file entries to metadata
-4. Update manifest (unencrypted)
-5. Save updated metadata
-```
-
-#### Seal
-```
-1. Open database and verify password
-2. Read metadata to get tracked files
-3. For each tracked file:
+4. For each file:
    - Read file contents
    - Calculate SHA-256 hash
    - Encrypt contents with unique nonce
    - Store in files bucket
-   - Update manifest with current file info
-4. Update metadata with hashes
-5. Update modification timestamp
+   - Update manifest with file info (JSON)
+5. Update metadata with hashes
+6. Update modification timestamp
+7. Optionally remove original files
 ```
 
-#### Unseal
+#### Unlock
 ```
 1. Open database and verify password
 2. Read metadata to get file list
@@ -160,8 +160,11 @@ Main operations flow:
    - Read encrypted data from files bucket
    - Decrypt contents
    - Verify SHA-256 hash
+   - Check if file exists locally
+   - If exists and differs, handle conflict (keep local, use vault, or prompt)
    - Write to disk with original permissions
    - Restore modification time
+4. Return result with extracted, skipped, and error counts
 ```
 
 ## Security Model
@@ -222,7 +225,7 @@ func TestKeyDerivation(t *testing.T)
 
 // lockenv_test.go
 func TestInitCommand(t *testing.T)
-func TestSealUnseal(t *testing.T)
+func TestLockUnlock(t *testing.T)
 ```
 
 ### Integration Tests
@@ -236,50 +239,46 @@ func TestSealUnseal(t *testing.T)
 ```bash
 # Initialize
 $ lockenv init
-Enter password: 
-Confirm password: 
-✓ Initialized .lockenv
+Enter password:
+Confirm password:
+initialized: .lockenv
 
-# Track files
-$ lockenv track .env config/*.json
-✓ Tracking .env
-✓ Tracking config/app.json
-✓ Tracking config/db.json
-
-# Seal files
-$ lockenv seal -r
-Enter password: 
-✓ Sealed .env
-✓ Sealed config/app.json
-✓ Sealed config/db.json
-✓ Removed .env
-✓ Removed config/app.json
-✓ Removed config/db.json
-✓ Sealed 3 files into .lockenv
+# Lock files (encrypt and store)
+$ lockenv lock .env config/*.json --remove
+Enter password:
+locking: .env
+locking: config/app.json
+locking: config/db.json
+encrypted: .env
+encrypted: config/app.json
+encrypted: config/db.json
+removed: .env
+removed: config/app.json
+removed: config/db.json
+locked: 3 files into .lockenv
 
 # List files (no password required)
-$ lockenv list
+$ lockenv ls
 Files in .lockenv:
   .env (45 bytes)
   config/app.json (1.2 KB)
   config/db.json (523 bytes)
 
-# Unseal
-$ lockenv unseal
-Enter password: 
-✓ Extracted .env
-✓ Extracted config/app.json
-✓ Extracted config/db.json
-✓ Extracted 3 files from .lockenv
+# Unlock (decrypt and restore)
+$ lockenv unlock
+Enter password:
+unlocked: .env
+unlocked: config/app.json
+unlocked: config/db.json
 
 # Inspect with BBolt CLI
 $ bbolt buckets .lockenv
-files
-manifest
-meta
-metadata
+blobs
+config
+index
+private
 
-$ bbolt keys .lockenv manifest
+$ bbolt keys .lockenv index
 .env
 config/app.json
 config/db.json
@@ -292,8 +291,8 @@ config/db.json
    - Configurable compression levels
 
 2. **Selective Operations**
-   - Unseal specific files only
-   - Pattern-based unsealing
+   - Unlock specific files only
+   - Pattern-based unlocking
 
 3. **Cloud Backup**
    - Export/import commands

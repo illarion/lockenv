@@ -4,13 +4,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/live-labs/lockenv/internal/core"
-	"github.com/live-labs/lockenv/internal/crypto"
+	"github.com/illarion/lockenv/internal/core"
+	"github.com/illarion/lockenv/internal/crypto"
 )
 
-// Chpasswd changes the password for .lockenv
-func Chpasswd() {
-	lockenv := core.New(".")
+// Passwd changes the password for .lockenv
+func Passwd() {
+	lockenv, err := core.New(".")
+	if err != nil {
+		HandleError(err)
+	}
+	defer lockenv.Close()
 
 	// Get current password
 	currentPassword := GetPasswordOrExit("Enter current password: ")
@@ -29,5 +33,10 @@ func Chpasswd() {
 		HandleError(err)
 	}
 
-	fmt.Println("✓ Password changed successfully")
+	// Compact database after rewriting all data
+	if err := lockenv.Compact(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: compaction failed: %s\n", err)
+	}
+
+	fmt.Println("password changed successfully")
 }

@@ -76,7 +76,7 @@
 - [ ] Add option for post-quantum algorithms
 
 ### 10. Performance Optimizations
-- [ ] Parallel file processing for seal/unseal operations
+- [ ] Parallel file processing for lock/unlock operations
 - [ ] Add progress bars for large operations
 - [ ] Implement streaming for large files (>100MB)
 - [ ] Add optional compression before encryption

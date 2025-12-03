@@ -1,20 +1,26 @@
 package cmd
 
 import (
-	"github.com/live-labs/lockenv/internal/core"
-	"github.com/live-labs/lockenv/internal/crypto"
+	"context"
+
+	"github.com/illarion/lockenv/internal/core"
+	"github.com/illarion/lockenv/internal/crypto"
 )
 
 // Diff compares .lockenv contents with local files
-func Diff() {
-	lockenv := core.New(".")
+func Diff(ctx context.Context) {
+	lockenv, err := core.New(".")
+	if err != nil {
+		HandleError(err)
+	}
+	defer lockenv.Close()
 
 	// Get password
 	password := GetPasswordOrExit("Enter password: ")
 	defer crypto.ClearBytes(password)
 
 	// Show diff
-	if err := lockenv.Diff(password); err != nil {
+	if err := lockenv.Diff(ctx, password); err != nil {
 		HandleError(err)
 	}
 }

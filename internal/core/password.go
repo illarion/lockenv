@@ -5,7 +5,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/live-labs/lockenv/internal/crypto"
+	"github.com/illarion/lockenv/internal/crypto"
 	"golang.org/x/term"
 )
 

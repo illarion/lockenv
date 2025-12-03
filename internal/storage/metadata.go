@@ -20,7 +20,6 @@ type FileEntry struct {
 	Mode    uint32    `json:"mode"`
 	ModTime time.Time `json:"modTime"`
 	Hash    string    `json:"hash"`
-	// Offset and Length are no longer needed with BBolt
 }
 
 // NewMetadata creates a new metadata structure
@@ -34,11 +33,20 @@ func NewMetadata() *Metadata {
 	}
 }
 
-// AddFile adds a file entry to the metadata
+// AddFile adds or updates a file entry in the metadata
 func (m *Metadata) AddFile(entry FileEntry) {
-	// Remove existing entry if present
-	m.RemoveFile(entry.Path)
-	
+	if entry.Size < 0 {
+		entry.Size = 0
+	}
+	// Update existing entry if present
+	for i := range m.Files {
+		if m.Files[i].Path == entry.Path {
+			m.Files[i] = entry
+			m.Modified = time.Now()
+			return
+		}
+	}
+	// Not found, append new entry
 	m.Files = append(m.Files, entry)
 	m.Modified = time.Now()
 }

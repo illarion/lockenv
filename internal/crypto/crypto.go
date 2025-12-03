@@ -17,7 +17,7 @@ const (
 	KeySize       = 32     // AES-256 key size
 	NonceSize     = 12     // GCM nonce size
 	TagSize       = 16     // GCM authentication tag size
-	DefaultIters  = 100000 // Default PBKDF2 iterations
+	DefaultIters  = 210000 // Default PBKDF2 iterations (OWASP minimum)
 )
 
 var (

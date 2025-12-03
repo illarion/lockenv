@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,34 +9,150 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/live-labs/lockenv/internal/crypto"
-	"github.com/live-labs/lockenv/internal/storage"
+	"github.com/illarion/lockenv/internal/crypto"
+	"github.com/illarion/lockenv/internal/git"
+	"github.com/illarion/lockenv/internal/security"
+	"github.com/illarion/lockenv/internal/storage"
 )
 
 const (
-	LockEnvFile = ".lockenv"
+	LockEnvFile         = ".lockenv"
+	DirPermSecure       = 0700 // Directory: owner rwx only
+	FilePermSecure      = 0600 // File: owner rw only
+	MaxVaultCopies      = 100  // Max numbered .from-vault.N backups
+	passwordCheckString = "lockenv-password-check"
 )
 
 var (
-	ErrNotInitialized = errors.New("lockenv not initialized")
-	ErrAlreadyExists  = errors.New("lockenv already exists")
-	ErrWrongPassword  = errors.New("wrong password")
-	ErrNoTrackedFiles = errors.New("no tracked files")
+	ErrNotInitialized   = errors.New("lockenv not initialized")
+	ErrAlreadyExists    = errors.New("lockenv already exists")
+	ErrWrongPassword    = errors.New("wrong password")
+	ErrPasswordRequired = errors.New("password required")
+	ErrNoTrackedFiles   = errors.New("no files in vault")
 )
 
 // LockEnv manages encrypted file storage
 type LockEnv struct {
-	path string
-	db   *storage.Storage
+	path      string
+	db        *storage.Storage
+	validator *security.PathValidator
 }
 
 // New creates a new LockEnv instance
-func New(path string) *LockEnv {
-	return &LockEnv{
-		path: filepath.Join(path, LockEnvFile),
+func New(path string) (*LockEnv, error) {
+	validator, err := security.New(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize path validator: %w", err)
 	}
+
+	return &LockEnv{
+		path:      filepath.Join(path, LockEnvFile),
+		validator: validator,
+	}, nil
+}
+
+// Close releases resources held by the LockEnv instance
+func (l *LockEnv) Close() error {
+	if l.validator != nil {
+		return l.validator.Close()
+	}
+	return nil
+}
+
+// updateManifestEntry updates a manifest entry
+func (l *LockEnv) updateManifestEntry(db *storage.Storage, path string, size int64, modTime time.Time, hash string) error {
+	return db.UpdateManifest(path, size, modTime, hash)
+}
+
+// normalizeToRelative converts an absolute path to relative from repo root.
+// Returns the path unchanged if already relative, or error if outside repo.
+func (l *LockEnv) normalizeToRelative(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return path, nil
+	}
+	repoRoot := filepath.Dir(l.path)
+	relPath, err := filepath.Rel(repoRoot, path)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		return "", fmt.Errorf("path %s is outside repository", path)
+	}
+	return relPath, nil
+}
+
+// secureFileMode masks a file mode to preserve execute for owner only, removes group/other.
+// Returns FilePermSecure (0600) if the result would be zero.
+func secureFileMode(mode uint32) os.FileMode {
+	secure := os.FileMode(mode) & 0700
+	if secure == 0 {
+		return FilePermSecure
+	}
+	return secure
+}
+
+// lockSingleFile validates and adds one file to the vault.
+// Prints warnings for skipped files, returns error only for fatal failures.
+func (l *LockEnv) lockSingleFile(db *storage.Storage, file string, metadata *storage.Metadata) error {
+	// Convert absolute paths to relative
+	inputPath, err := l.normalizeToRelative(file)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return nil
+	}
+
+	// Validate path to ensure it's within repository
+	validPath, err := l.validator.ValidateAndNormalize(inputPath)
+	if err != nil {
+		fmt.Printf("error: invalid path %s: %v\n", file, err)
+		return nil
+	}
+
+	// Check if file exists using validated path
+	repoRoot := filepath.Dir(l.path)
+	platformPath := filepath.Join(repoRoot, filepath.FromSlash(validPath))
+	info, err := os.Stat(platformPath)
+	if err != nil {
+		fmt.Printf("warning: cannot access %s: %v\n", validPath, err)
+		return nil
+	}
+
+	if info.IsDir() {
+		fmt.Printf("warning: skipping directory %s\n", validPath)
+		return nil
+	}
+
+	// Read and hash file content for accurate change detection
+	content, err := os.ReadFile(platformPath)
+	if err != nil {
+		fmt.Printf("warning: cannot read %s: %v\n", validPath, err)
+		return nil
+	}
+	hashBytes := sha256.Sum256(content)
+	hashStr := hex.EncodeToString(hashBytes[:])
+	crypto.ClearBytes(content)
+
+	// Add to metadata
+	metadata.AddFile(storage.FileEntry{
+		Path:    validPath,
+		Size:    info.Size(),
+		Mode:    uint32(info.Mode()),
+		ModTime: info.ModTime(),
+		Hash:    hashStr,
+	})
+
+	// Update manifest with hash
+	if err := l.updateManifestEntry(db, validPath, info.Size(), info.ModTime(), hashStr); err != nil {
+		return fmt.Errorf("failed to update manifest: %w", err)
+	}
+
+	fmt.Printf("locking: %s\n", validPath)
+	return nil
+}
+
+// getManifestEntries retrieves manifest entries
+func (l *LockEnv) getManifestEntries(db *storage.Storage) ([]storage.ManifestEntry, error) {
+	return db.GetManifest()
 }
 
 // Init initializes a new .lockenv file
@@ -80,13 +197,13 @@ func (l *LockEnv) Init(password []byte) error {
 	defer enc.Destroy()
 
 	// Create and store password verification checksum
-	checksum := sha256.Sum256([]byte("lockenv-password-check"))
+	checksum := sha256.Sum256([]byte(passwordCheckString))
 	checksumData, err := enc.Encrypt([]byte(hex.EncodeToString(checksum[:])))
 	if err != nil {
 		return fmt.Errorf("failed to encrypt checksum: %w", err)
 	}
 
-	if err := db.StoreMetadata("checksum", checksumData); err != nil {
+	if err := db.StoreMetadataBytes("checksum", checksumData); err != nil {
 		return fmt.Errorf("failed to store checksum: %w", err)
 	}
 
@@ -102,20 +219,19 @@ func (l *LockEnv) Init(password []byte) error {
 		return fmt.Errorf("failed to encrypt metadata: %w", err)
 	}
 
-	if err := db.StoreMetadata("files", encryptedMetadata); err != nil {
+	if err := db.StoreMetadataBytes("files", encryptedMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	return nil
 }
 
-// Track adds files to the tracking list
-func (l *LockEnv) Track(patterns []string) error {
-	return l.TrackWithPassword(patterns, nil)
-}
+// LockFiles adds files to the tracking list using the CLI "lock" terminology.
+func (l *LockEnv) LockFiles(ctx context.Context, patterns []string, password []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-// TrackWithPassword adds files to the tracking list with a password
-func (l *LockEnv) TrackWithPassword(patterns []string, password []byte) error {
 	// Open database
 	db, err := storage.Open(l.path)
 	if err != nil {
@@ -131,45 +247,38 @@ func (l *LockEnv) TrackWithPassword(patterns []string, password []byte) error {
 	}
 	defer enc.Destroy()
 
+	repoRoot := filepath.Dir(l.path)
+
 	// Track new files
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Glob relative to repo root, not CWD
+		absPattern := pattern
+		if !filepath.IsAbs(pattern) {
+			absPattern = filepath.Join(repoRoot, pattern)
+		}
+
+		matches, err := filepath.Glob(absPattern)
 		if err != nil {
 			return fmt.Errorf("invalid pattern %s: %w", pattern, err)
 		}
 
 		if len(matches) == 0 {
-			// Direct file path
-			matches = []string{pattern}
+			// Direct file path - use absolute path relative to repo root
+			if !filepath.IsAbs(pattern) {
+				matches = []string{filepath.Join(repoRoot, pattern)}
+			} else {
+				matches = []string{pattern}
+			}
 		}
 
 		for _, file := range matches {
-			// Check if file exists
-			info, err := os.Stat(file)
-			if err != nil {
-				fmt.Printf("Warning: cannot access %s: %v\n", file, err)
-				continue
+			if err := l.lockSingleFile(db, file, metadata); err != nil {
+				return err
 			}
-
-			if info.IsDir() {
-				fmt.Printf("Warning: skipping directory %s\n", file)
-				continue
-			}
-
-			// Add to metadata
-			metadata.AddFile(storage.FileEntry{
-				Path:    file,
-				Size:    info.Size(),
-				Mode:    uint32(info.Mode()),
-				ModTime: info.ModTime(),
-			})
-
-			// Update manifest (unencrypted)
-			if err := db.UpdateManifest(file, info.Size(), info.ModTime()); err != nil {
-				return fmt.Errorf("failed to update manifest: %w", err)
-			}
-
-			fmt.Printf("✓ Tracking %s\n", file)
 		}
 	}
 
@@ -177,8 +286,11 @@ func (l *LockEnv) TrackWithPassword(patterns []string, password []byte) error {
 	return l.saveMetadata(metadata, enc)
 }
 
-// Seal encrypts and stores tracked files
-func (l *LockEnv) Seal(password []byte, remove bool) error {
+func (l *LockEnv) FinalizeLock(ctx context.Context, password []byte, remove bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// Open database
 	db, err := storage.Open(l.path)
 	if err != nil {
@@ -198,44 +310,115 @@ func (l *LockEnv) Seal(password []byte, remove bool) error {
 		return ErrNoTrackedFiles
 	}
 
-	// Process each file
-	var processedFiles []string
+	// Two-phase approach for atomicity:
+	// Phase 1: Read and encrypt all files, collect results
+	// Phase 2: Store to DB and update metadata only if Phase 1 succeeds
+
+	type pendingFile struct {
+		index     int
+		path      string
+		absPath   string
+		encrypted []byte
+		hash      string
+		size      int64
+		mode      uint32
+		modTime   time.Time
+	}
+
+	repoRoot := filepath.Dir(l.path)
+	var pending []pendingFile
+
+	// Phase 1: Read and encrypt all files
 	for i := range metadata.Files {
+		if err := ctx.Err(); err != nil {
+			// Clear any pending encrypted data
+			for _, p := range pending {
+				crypto.ClearBytes(p.encrypted)
+			}
+			return err
+		}
+
 		file := &metadata.Files[i]
-		
+		absPath := filepath.Join(repoRoot, filepath.FromSlash(file.Path))
+
 		// Read file
-		data, err := os.ReadFile(file.Path)
+		data, err := os.ReadFile(absPath)
 		if err != nil {
-			fmt.Printf("Warning: cannot read %s: %v\n", file.Path, err)
+			fmt.Printf("warning: cannot read %s: %v\n", file.Path, err)
+			continue
+		}
+
+		// Get file info
+		info, err := os.Stat(absPath)
+		if err != nil {
+			crypto.ClearBytes(data)
+			fmt.Printf("warning: cannot stat %s: %v\n", file.Path, err)
 			continue
 		}
 
 		// Calculate hash
-		hash := sha256.Sum256(data)
-		file.Hash = hex.EncodeToString(hash[:])
+		hashBytes := sha256.Sum256(data)
+		hashStr := hex.EncodeToString(hashBytes[:])
 
-		// Encrypt and store file
+		// Encrypt
 		encryptedData, err := enc.Encrypt(data)
+		crypto.ClearBytes(data)
 		if err != nil {
+			// Clear any pending encrypted data on failure
+			for _, p := range pending {
+				crypto.ClearBytes(p.encrypted)
+			}
 			return fmt.Errorf("failed to encrypt %s: %w", file.Path, err)
 		}
 
-		if err := db.StoreFile(file.Path, encryptedData); err != nil {
-			return fmt.Errorf("failed to store %s: %w", file.Path, err)
-		}
+		pending = append(pending, pendingFile{
+			index:     i,
+			path:      file.Path,
+			absPath:   absPath,
+			encrypted: encryptedData,
+			hash:      hashStr,
+			size:      info.Size(),
+			mode:      uint32(info.Mode()),
+			modTime:   info.ModTime(),
+		})
+	}
 
-		// Update file info in manifest
-		info, err := os.Stat(file.Path)
-		if err == nil {
-			file.Size = info.Size()
-			file.ModTime = info.ModTime()
-			if err := db.UpdateManifest(file.Path, info.Size(), info.ModTime()); err != nil {
-				fmt.Printf("Warning: failed to update manifest for %s: %v\n", file.Path, err)
+	if len(pending) == 0 {
+		return fmt.Errorf("no files could be processed")
+	}
+
+	// Phase 2: Store to DB and update metadata (only after all encryptions succeed)
+	var processedFiles []string
+	for _, p := range pending {
+		if err := ctx.Err(); err != nil {
+			// Clear remaining encrypted data
+			for j := range pending {
+				crypto.ClearBytes(pending[j].encrypted)
 			}
+			return err
 		}
 
-		processedFiles = append(processedFiles, file.Path)
-		fmt.Printf("✓ Sealed %s\n", file.Path)
+		// Store encrypted data
+		if err := db.StoreFileData(p.path, p.encrypted); err != nil {
+			crypto.ClearBytes(p.encrypted)
+			return fmt.Errorf("failed to store %s: %w", p.path, err)
+		}
+
+		// Update manifest (fail fast instead of warning)
+		if err := l.updateManifestEntry(db, p.path, p.size, p.modTime, p.hash); err != nil {
+			return fmt.Errorf("failed to update manifest for %s: %w", p.path, err)
+		}
+
+		// Now update metadata
+		file := &metadata.Files[p.index]
+		file.Hash = p.hash
+		file.Size = p.size
+		file.Mode = p.mode
+		file.ModTime = p.modTime
+
+		crypto.ClearBytes(p.encrypted)
+		processedFiles = append(processedFiles, p.absPath)
+		fmt.Printf("encrypted: %s\n", p.path)
 	}
 
 	// Save updated metadata
@@ -246,30 +429,33 @@ func (l *LockEnv) Seal(password []byte, remove bool) error {
 
 	// Update modification time
 	if err := db.UpdateModified(); err != nil {
-		fmt.Printf("Warning: failed to update modification time: %v\n", err)
+		fmt.Printf("warning: failed to update modification time: %v\n", err)
 	}
 
 	// Remove original files if requested
 	if remove {
 		for _, file := range processedFiles {
 			if err := os.Remove(file); err != nil {
-				fmt.Printf("Warning: cannot remove %s: %v\n", file, err)
+				fmt.Printf("warning: cannot remove %s: %v\n", file, err)
 			} else {
-				fmt.Printf("✓ Removed %s\n", file)
+				fmt.Printf("removed: %s\n", file)
 			}
 		}
 	}
 
-	fmt.Printf("✓ Sealed %d files into %s\n", len(processedFiles), LockEnvFile)
+	fmt.Printf("locked: %d files into %s\n", len(processedFiles), LockEnvFile)
 	return nil
 }
 
-// Unseal extracts files from the lockenv
-func (l *LockEnv) Unseal(password []byte) error {
+// Unlock extracts files with smart conflict resolution (implements `lockenv unlock`).
+func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStrategy) (*UnlockResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Open database
 	db, err := storage.Open(l.path)
 	if err != nil {
-		return ErrNotInitialized
+		return nil, ErrNotInitialized
 	}
 	defer db.Close()
 	l.db = db
@@ -277,69 +463,233 @@ func (l *LockEnv) Unseal(password []byte) error {
 	// Read metadata with password
 	metadata, enc, err := l.readMetadata(password)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer enc.Destroy()
 
+	result := &UnlockResult{
+		Extracted: []string{},
+		Skipped:   []string{},
+		Errors:    []string{},
+	}
+
+	// Get repository root for path operations
+	repoRoot := filepath.Dir(l.path)
+
 	// Extract each file
-	extracted := 0
 	for _, file := range metadata.Files {
-		// Read encrypted file
-		encryptedData, err := db.GetFile(file.Path)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Read encrypted file data
+		encryptedData, err := db.GetFileData(file.Path)
 		if err != nil {
-			fmt.Printf("Warning: cannot read %s from storage: %v\n", file.Path, err)
+			msg := fmt.Sprintf("%s: cannot read from storage: %v", file.Path, err)
+			result.Errors = append(result.Errors, msg)
+			fmt.Printf("error: %s\n", msg)
 			continue
 		}
 
 		// Decrypt file
-		data, err := enc.Decrypt(encryptedData)
+		sealedData, err := enc.Decrypt(encryptedData)
 		if err != nil {
-			fmt.Printf("Warning: cannot decrypt %s: %v\n", file.Path, err)
+			msg := fmt.Sprintf("%s: cannot decrypt: %v", file.Path, err)
+			result.Errors = append(result.Errors, msg)
+			fmt.Printf("error: %s\n", msg)
 			continue
 		}
 
 		// Verify hash
-		hash := sha256.Sum256(data)
+		hash := sha256.Sum256(sealedData)
 		if hex.EncodeToString(hash[:]) != file.Hash {
-			fmt.Printf("Warning: %s failed integrity check\n", file.Path)
+			crypto.ClearBytes(sealedData)
+			msg := fmt.Sprintf("%s: failed integrity check", file.Path)
+			result.Errors = append(result.Errors, msg)
+			fmt.Printf("error: %s\n", msg)
 			continue
 		}
 
-		// Create directory if needed
-		dir := filepath.Dir(file.Path)
+		// Validate path from vault to prevent path traversal attacks
+		validPath, err := l.validator.ValidateExistingPath(file.Path)
+		if err != nil {
+			crypto.ClearBytes(sealedData)
+			msg := fmt.Sprintf("%s: invalid path from vault: %v", file.Path, err)
+			result.Errors = append(result.Errors, msg)
+			fmt.Printf("error: %s\n", msg)
+			continue
+		}
+
+		// Check if local file exists (use absolute path with repoRoot)
+		platformPath := filepath.Join(repoRoot, filepath.FromSlash(validPath))
+		localData, err := os.ReadFile(platformPath)
+		fileExists := err == nil
+
+		if fileExists {
+			// Compare files
+			if CompareFiles(localData, sealedData) {
+				// Files are identical, skip
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+				result.Skipped = append(result.Skipped, validPath)
+				fmt.Printf("skipped: %s (unchanged)\n", validPath)
+				continue
+			}
+
+			// Files differ - handle conflict
+			conflictResult, err := HandleConflict(validPath, localData, sealedData, strategy)
+			if err != nil {
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+				result.Errors = append(result.Errors, err.Error())
+				fmt.Printf("error: %s\n", err.Error())
+				continue
+			}
+
+			switch conflictResult.Resolution {
+			case ResolutionKeepLocal:
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+				result.Skipped = append(result.Skipped, validPath)
+				fmt.Printf("skipped: %s (kept local version)\n", validPath)
+				continue
+			case ResolutionSkip:
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+				result.Skipped = append(result.Skipped, validPath)
+				fmt.Printf("skipped: %s\n", validPath)
+				continue
+			case ResolutionEditMerged:
+				// Clear original decrypted data before using merged data
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+				// Use the merged data from editor
+				sealedData = conflictResult.MergedData
+			case ResolutionKeepBoth:
+				// Save vault version with .from-vault suffix
+				vaultPath := validPath + ".from-vault"
+
+				// Check if .from-vault file already exists
+				vaultPlatformPath := filepath.Join(repoRoot, filepath.FromSlash(vaultPath))
+				foundSlot := true
+				if _, err := os.Stat(vaultPlatformPath); err == nil {
+					// File exists, find available numbered suffix
+					foundSlot = false
+					for i := 1; i < MaxVaultCopies; i++ {
+						vaultPath = fmt.Sprintf("%s.from-vault.%d", validPath, i)
+						vaultPlatformPath = filepath.Join(repoRoot, filepath.FromSlash(vaultPath))
+						if _, err := os.Stat(vaultPlatformPath); os.IsNotExist(err) {
+							foundSlot = true
+							break
+						}
+					}
+				}
+
+				// Error if all backup slots exhausted
+				if !foundSlot {
+					crypto.ClearBytes(sealedData)
+					crypto.ClearBytes(localData)
+					msg := fmt.Sprintf("%s: too many backup copies (max %d)", validPath, MaxVaultCopies)
+					result.Errors = append(result.Errors, msg)
+					fmt.Printf("error: %s\n", msg)
+					continue
+				}
+
+				// Validate the vault copy path
+				if _, err := l.validator.ValidateAndNormalize(vaultPath); err != nil {
+					crypto.ClearBytes(sealedData)
+					crypto.ClearBytes(localData)
+					msg := fmt.Sprintf("%s: invalid vault copy path: %v", vaultPath, err)
+					result.Errors = append(result.Errors, msg)
+					fmt.Printf("error: %s\n", msg)
+					continue
+				}
+
+				// Create directory for vault copy if needed using secure operation
+				vaultDir := filepath.Dir(vaultPath)
+				if vaultDir != "." && vaultDir != "/" {
+					if err := l.validator.MkdirAllInRoot(vaultDir, DirPermSecure); err != nil {
+						crypto.ClearBytes(sealedData)
+						crypto.ClearBytes(localData)
+						msg := fmt.Sprintf("%s: cannot create directory for vault copy: %v", vaultPath, err)
+						result.Errors = append(result.Errors, msg)
+						fmt.Printf("error: %s\n", msg)
+						continue
+					}
+				}
+
+				// Write vault version to alternate path using secure operation
+				if err := l.validator.WriteFileInRoot(vaultPath, sealedData, secureFileMode(file.Mode)); err != nil {
+					msg := fmt.Sprintf("%s: cannot write vault copy: %v", vaultPath, err)
+					result.Errors = append(result.Errors, msg)
+					fmt.Printf("error: %s\n", msg)
+				} else {
+					result.Extracted = append(result.Extracted, vaultPath)
+					fmt.Printf("saved: %s (vault version)\n", vaultPath)
+				}
+
+				// Clear sensitive data from memory
+				crypto.ClearBytes(sealedData)
+				crypto.ClearBytes(localData)
+
+				// Keep local file unchanged
+				result.Skipped = append(result.Skipped, validPath)
+				fmt.Printf("skipped: %s (kept local version)\n", validPath)
+				continue
+			case ResolutionUseVault:
+				// Continue to write vault version
+			}
+		}
+
+		// Create directory if needed using secure operation
+		dir := filepath.Dir(validPath)
 		if dir != "." && dir != "/" {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				fmt.Printf("Warning: cannot create directory %s: %v\n", dir, err)
+			if err := l.validator.MkdirAllInRoot(dir, DirPermSecure); err != nil {
+				crypto.ClearBytes(sealedData)
+				if fileExists {
+					crypto.ClearBytes(localData)
+				}
+				msg := fmt.Sprintf("%s: cannot create directory: %v", validPath, err)
+				result.Errors = append(result.Errors, msg)
+				fmt.Printf("error: %s\n", msg)
 				continue
 			}
 		}
 
-		// Write file
-		if err := os.WriteFile(file.Path, data, os.FileMode(file.Mode)); err != nil {
-			fmt.Printf("Warning: cannot write %s: %v\n", file.Path, err)
+		// Write file using secure operation
+		if err := l.validator.WriteFileInRoot(validPath, sealedData, secureFileMode(file.Mode)); err != nil {
+			crypto.ClearBytes(sealedData)
+			if fileExists {
+				crypto.ClearBytes(localData)
+			}
+			msg := fmt.Sprintf("%s: cannot write file: %v", validPath, err)
+			result.Errors = append(result.Errors, msg)
+			fmt.Printf("error: %s\n", msg)
 			continue
 		}
 
 		// Set modification time
-		if err := os.Chtimes(file.Path, time.Now(), file.ModTime); err != nil {
+		if err := os.Chtimes(platformPath, time.Now(), file.ModTime); err != nil {
 			// Non-critical error
 		}
 
-		extracted++
-		fmt.Printf("✓ Extracted %s\n", file.Path)
+		// Clear sensitive data from memory
+		crypto.ClearBytes(sealedData)
+		if fileExists {
+			crypto.ClearBytes(localData)
+		}
+
+		result.Extracted = append(result.Extracted, validPath)
+		fmt.Printf("unlocked: %s\n", validPath)
 	}
 
-	fmt.Printf("✓ Extracted %d files from %s\n", extracted, LockEnvFile)
-	return nil
+	return result, nil
 }
 
-// Forget removes files from tracking
-func (l *LockEnv) Forget(patterns []string) error {
-	return l.ForgetWithPassword(patterns, nil)
-}
-
-// ForgetWithPassword removes files from tracking with a password
-func (l *LockEnv) ForgetWithPassword(patterns []string, password []byte) error {
+// RemoveFiles removes files from tracking with a password (implements `lockenv rm`).
+func (l *LockEnv) RemoveFiles(ctx context.Context, patterns []string, password []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Open database
 	db, err := storage.Open(l.path)
 	if err != nil {
@@ -355,37 +705,67 @@ func (l *LockEnv) ForgetWithPassword(patterns []string, password []byte) error {
 	}
 	defer enc.Destroy()
 
+	repoRoot := filepath.Dir(l.path)
+
 	// Remove files
 	removed := 0
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Glob relative to repo root, not CWD
+		absPattern := pattern
+		if !filepath.IsAbs(pattern) {
+			absPattern = filepath.Join(repoRoot, pattern)
+		}
+
+		matches, err := filepath.Glob(absPattern)
 		if err != nil {
 			return fmt.Errorf("invalid pattern %s: %w", pattern, err)
 		}
 
 		if len(matches) == 0 {
-			// Direct file path
-			matches = []string{pattern}
+			// Direct file path - use absolute path relative to repo root
+			if !filepath.IsAbs(pattern) {
+				matches = []string{filepath.Join(repoRoot, pattern)}
+			} else {
+				matches = []string{pattern}
+			}
 		}
 
 		for _, file := range matches {
-			if metadata.RemoveFile(file) {
+			// Convert absolute paths to relative
+			inputPath, err := l.normalizeToRelative(file)
+			if err != nil {
+				fmt.Printf("warning: %v\n", err)
+				continue
+			}
+
+			// Validate and normalize path to match stored format
+			storedPath, err := l.validator.ValidateAndNormalize(inputPath)
+			if err != nil {
+				fmt.Printf("warning: invalid path %s: %v\n", file, err)
+				continue
+			}
+
+			if metadata.RemoveFile(storedPath) {
 				// Remove from manifest
-				if err := db.RemoveFromManifest(file); err != nil {
-					fmt.Printf("Warning: failed to remove %s from manifest: %v\n", file, err)
+				if err := db.RemoveFromManifest(storedPath); err != nil {
+					fmt.Printf("warning: failed to remove %s from manifest: %v\n", storedPath, err)
 				}
 				// Remove encrypted file data
-				if err := db.RemoveFile(file); err != nil {
+				if err := db.RemoveFile(storedPath); err != nil {
 					// Ignore error - file might not be sealed yet
 				}
 				removed++
-				fmt.Printf("✓ No longer tracking %s\n", file)
+				fmt.Printf("removed: %s from vault\n", storedPath)
 			}
 		}
 	}
 
 	if removed == 0 {
-		fmt.Println("No matching tracked files found")
+		fmt.Println("No matching files found in vault")
 		return nil
 	}
 
@@ -394,7 +774,10 @@ func (l *LockEnv) ForgetWithPassword(patterns []string, password []byte) error {
 }
 
 // List returns tracked files from the manifest (no password required)
-func (l *LockEnv) List() ([]storage.FileEntry, error) {
+func (l *LockEnv) List(ctx context.Context) ([]storage.FileEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Check if exists
 	if _, err := os.Stat(l.path); err != nil {
 		return nil, ErrNotInitialized
@@ -408,18 +791,29 @@ func (l *LockEnv) List() ([]storage.FileEntry, error) {
 	defer db.Close()
 
 	// Get manifest entries
-	entries, err := db.GetManifest()
+	entries, err := l.getManifestEntries(db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
 
-	// Convert to FileEntry format
-	files := make([]storage.FileEntry, len(entries))
-	for i, e := range entries {
-		files[i] = storage.FileEntry{
-			Path: e.Path,
-			Size: e.Size,
+	// Convert to FileEntry format, validating paths
+	files := make([]storage.FileEntry, 0, len(entries))
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+
+		// Validate path to filter out tampered entries
+		validPath, err := l.validator.ValidateExistingPath(e.Path)
+		if err != nil {
+			// Skip invalid entries
+			continue
+		}
+
+		files = append(files, storage.FileEntry{
+			Path: validPath,
+			Size: e.Size,
+		})
 	}
 
 	return files, nil
@@ -448,14 +842,19 @@ func (l *LockEnv) ChangePassword(currentPassword, newPassword []byte) error {
 		data []byte
 	}
 	var files []fileData
+	// Ensure all decrypted file data is cleared from memory on all exit paths
+	defer func() {
+		for i := range files {
+			crypto.ClearBytes(files[i].data)
+		}
+	}()
 
 	for _, entry := range metadata.Files {
-		encData, err := db.GetFile(entry.Path)
+		encData, err := db.GetFileData(entry.Path)
 		if err != nil {
-			// File might not be sealed yet
-			continue
+			return fmt.Errorf("file %s not sealed in vault: %w", entry.Path, err)
 		}
-		
+
 		data, err := currentEnc.Decrypt(encData)
 		if err != nil {
 			return fmt.Errorf("failed to decrypt file %s: %w", entry.Path, err)
@@ -489,7 +888,7 @@ func (l *LockEnv) ChangePassword(currentPassword, newPassword []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to re-encrypt file %s: %w", file.path, err)
 		}
-		if err := db.StoreFile(file.path, encData); err != nil {
+		if err := db.StoreFileData(file.path, encData); err != nil {
 			return fmt.Errorf("failed to store re-encrypted file %s: %w", file.path, err)
 		}
 		// Clear file data from memory
@@ -497,12 +896,12 @@ func (l *LockEnv) ChangePassword(currentPassword, newPassword []byte) error {
 	}
 
 	// Re-encrypt checksum
-	checksum := sha256.Sum256([]byte("lockenv-password-check"))
+	checksum := sha256.Sum256([]byte(passwordCheckString))
 	checksumData, err := newEnc.Encrypt([]byte(hex.EncodeToString(checksum[:])))
 	if err != nil {
 		return fmt.Errorf("failed to encrypt checksum: %w", err)
 	}
-	if err := db.StoreMetadata("checksum", checksumData); err != nil {
+	if err := db.StoreMetadataBytes("checksum", checksumData); err != nil {
 		return fmt.Errorf("failed to store checksum: %w", err)
 	}
 
@@ -515,15 +914,18 @@ func (l *LockEnv) ChangePassword(currentPassword, newPassword []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to encrypt metadata: %w", err)
 	}
-	if err := db.StoreMetadata("files", encryptedMetadata); err != nil {
+	if err := db.StoreMetadataBytes("files", encryptedMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	return nil
 }
 
-// Diff compares .lockenv contents with local files
-func (l *LockEnv) Diff(password []byte) error {
+// Diff compares .lockenv contents with local files showing actual content differences
+func (l *LockEnv) Diff(ctx context.Context, password []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Open database
 	db, err := storage.Open(l.path)
 	if err != nil {
@@ -539,25 +941,71 @@ func (l *LockEnv) Diff(password []byte) error {
 	}
 	defer enc.Destroy()
 
+	hasChanges := false
+	repoRoot := filepath.Dir(l.path)
+
 	// Compare each file
-	for _, entry := range metadata.Files {
+	for _, file := range metadata.Files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Validate path to prevent path traversal
+		validPath, err := l.validator.ValidateExistingPath(file.Path)
+		if err != nil {
+			// Skip invalid entries
+			continue
+		}
+		platformPath := filepath.Join(repoRoot, filepath.FromSlash(validPath))
+
 		// Check if file exists locally
-		info, err := os.Stat(entry.Path)
+		localData, err := os.ReadFile(platformPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Printf("%s: not in working directory\n", entry.Path)
+				fmt.Printf("File not in working directory: %s\n", validPath)
 			} else {
-				fmt.Printf("%s: error accessing file: %v\n", entry.Path, err)
+				fmt.Printf("error: cannot read %s: %v\n", validPath, err)
 			}
 			continue
 		}
 
-		// Compare modification time and size
-		if info.Size() != entry.Size || info.ModTime().After(entry.ModTime) {
-			fmt.Printf("%s: modified\n", entry.Path)
-		} else {
-			fmt.Printf("%s: unchanged\n", entry.Path)
+		// Read encrypted file data from vault (use original path for db key)
+		encryptedData, err := db.GetFileData(file.Path)
+		if err != nil {
+			crypto.ClearBytes(localData)
+			fmt.Printf("error: cannot read %s from vault: %v\n", validPath, err)
+			continue
 		}
+
+		// Decrypt file
+		vaultData, err := enc.Decrypt(encryptedData)
+		if err != nil {
+			crypto.ClearBytes(localData)
+			fmt.Printf("error: cannot decrypt %s: %v\n", validPath, err)
+			continue
+		}
+
+		// Generate diff
+		diff, err := GenerateUnifiedDiff(validPath, vaultData, localData)
+		if err != nil {
+			crypto.ClearBytes(vaultData)
+			crypto.ClearBytes(localData)
+			fmt.Printf("error: cannot generate diff for %s: %v\n", validPath, err)
+			continue
+		}
+
+		if diff != "" {
+			fmt.Print(diff)
+			hasChanges = true
+		}
+
+		// Clear sensitive data from memory
+		crypto.ClearBytes(vaultData)
+		crypto.ClearBytes(localData)
+	}
+
+	if !hasChanges {
+		fmt.Println("No changes detected")
 	}
 
 	return nil
@@ -571,12 +1019,24 @@ type FileStatus struct {
 
 // StatusInfo contains status information
 type StatusInfo struct {
-	Files      []FileStatus
-	LastSealed time.Time
+	Files          []FileStatus
+	LastSealed     time.Time
+	TrackedCount   int
+	SealedCount    int
+	ModifiedCount  int
+	UnchangedCount int
+	TotalSize      int64
+	Algorithm      string
+	KDFIterations  uint32
+	Version        int
+	GitStatus      *git.GitStatus
 }
 
-// Status returns the current status (uses manifest, no password required)
-func (l *LockEnv) Status() (*StatusInfo, error) {
+// Status returns the current status (no password required)
+func (l *LockEnv) Status(ctx context.Context) (*StatusInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Check if exists
 	if _, err := os.Stat(l.path); err != nil {
 		return nil, ErrNotInitialized
@@ -596,42 +1056,196 @@ func (l *LockEnv) Status() (*StatusInfo, error) {
 		lastModified = time.Time{}
 	}
 
+	// Get KDF iterations
+	iterations, err := db.GetIterations()
+	if err != nil {
+		iterations = 0
+	}
+
 	status := &StatusInfo{
-		LastSealed: lastModified,
-		Files:      make([]FileStatus, 0),
+		LastSealed:     lastModified,
+		Files:          make([]FileStatus, 0),
+		Algorithm:      "AES-256-GCM",
+		KDFIterations:  iterations,
+		Version:        1,
+		TotalSize:      0,
+		TrackedCount:   0,
+		SealedCount:    0,
+		ModifiedCount:  0,
+		UnchangedCount: 0,
 	}
 
 	// Get manifest entries
-	entries, err := db.GetManifest()
+	entries, err := l.getManifestEntries(db)
 	if err != nil {
 		return status, nil // Return empty status
 	}
 
+	repoRoot := filepath.Dir(l.path)
+
 	// Check each file
 	for _, entry := range entries {
-		fs := FileStatus{Path: entry.Path}
-
-		// Check if file exists locally
-		info, err := os.Stat(entry.Path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				fs.Status = "sealed only"
-			} else {
-				fs.Status = "error"
-			}
-		} else {
-			// Compare with manifest
-			if info.Size() != entry.Size {
-				fs.Status = "modified"
-			} else {
-				fs.Status = "unchanged"
-			}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 
+		// Validate path to prevent path traversal from tampered manifest
+		validPath, err := l.validator.ValidateExistingPath(entry.Path)
+		if err != nil {
+			// Skip invalid entries (possible tampered manifest)
+			continue
+		}
+
+		fs := FileStatus{Path: validPath}
+		status.TrackedCount++
+		status.TotalSize += entry.Size
+
+		// Check if file exists locally using validated path
+		platformPath := filepath.Join(repoRoot, filepath.FromSlash(validPath))
+		_, err = os.Stat(platformPath)
+
+		if os.IsNotExist(err) {
+			fs.Status = "vault only"
+			status.SealedCount++
+			status.Files = append(status.Files, fs)
+			continue
+		}
+		if err != nil {
+			fs.Status = "error"
+			status.Files = append(status.Files, fs)
+			continue
+		}
+
+		// Hash-based comparison
+		content, err := os.ReadFile(platformPath)
+		if err != nil {
+			fs.Status = "modified"
+			status.ModifiedCount++
+			status.Files = append(status.Files, fs)
+			continue
+		}
+
+		localHash := sha256.Sum256(content)
+		localHashStr := hex.EncodeToString(localHash[:])
+		crypto.ClearBytes(content)
+
+		if localHashStr != entry.Hash {
+			fs.Status = "modified"
+			status.ModifiedCount++
+			status.Files = append(status.Files, fs)
+			continue
+		}
+
+		fs.Status = "unchanged"
+		status.UnchangedCount++
 		status.Files = append(status.Files, fs)
 	}
 
+	// Check git integration (use validated paths only)
+	trackedPaths := make([]string, 0, len(status.Files))
+	for _, fs := range status.Files {
+		trackedPaths = append(trackedPaths, fs.Path)
+	}
+
+	workDir := filepath.Dir(l.path)
+	gitStatus, err := git.CheckGitIntegration(workDir, trackedPaths)
+	if err == nil && gitStatus.IsRepo {
+		status.GitStatus = gitStatus
+	}
+
 	return status, nil
+}
+
+// ChangedFilesResult contains the result of analyzing tracked files
+type ChangedFilesResult struct {
+	Changed   []string // Files that have been modified
+	Unchanged []string // Files that are the same
+	Missing   []string // Files that don't exist locally (vault only)
+}
+
+// GetChangedFiles analyzes all tracked files and determines which have changed
+// Uses content hash comparison for accurate detection
+func (l *LockEnv) GetChangedFiles(ctx context.Context, password []byte) (*ChangedFilesResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Check if exists
+	if _, err := os.Stat(l.path); err != nil {
+		return nil, ErrNotInitialized
+	}
+
+	// Open database temporarily
+	db, err := storage.Open(l.path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	defer db.Close()
+
+	// Set l.db temporarily for readMetadata
+	l.db = db
+	defer func() { l.db = nil }()
+
+	// Read metadata (requires password)
+	metadata, enc, err := l.readMetadata(password)
+	if err != nil {
+		return nil, err
+	}
+	defer enc.Destroy() // Clear derived key from memory
+
+	result := &ChangedFilesResult{
+		Changed:   make([]string, 0),
+		Unchanged: make([]string, 0),
+		Missing:   make([]string, 0),
+	}
+
+	repoRoot := filepath.Dir(l.path)
+
+	// Check each tracked file
+	for _, file := range metadata.Files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		// Validate path to prevent path traversal
+		validPath, err := l.validator.ValidateExistingPath(file.Path)
+		if err != nil {
+			// Skip invalid entries
+			continue
+		}
+		platformPath := filepath.Join(repoRoot, filepath.FromSlash(validPath))
+
+		// Check if file exists
+		if _, err := os.Stat(platformPath); err != nil {
+			if os.IsNotExist(err) {
+				result.Missing = append(result.Missing, validPath)
+				continue
+			}
+			// Other error (permission, etc.) - treat as missing
+			result.Missing = append(result.Missing, validPath)
+			continue
+		}
+
+		// Read file content
+		content, err := os.ReadFile(platformPath)
+		if err != nil {
+			// Can't read - treat as missing
+			result.Missing = append(result.Missing, validPath)
+			continue
+		}
+
+		// Calculate hash
+		hash := sha256.Sum256(content)
+		currentHash := hex.EncodeToString(hash[:])
+
+		// Compare with stored hash
+		if currentHash != file.Hash {
+			result.Changed = append(result.Changed, validPath)
+		} else {
+			result.Unchanged = append(result.Unchanged, validPath)
+		}
+	}
+
+	return result, nil
 }
 
 // readMetadata reads and decrypts metadata
@@ -660,7 +1274,7 @@ func (l *LockEnv) readMetadata(password []byte) (*storage.Metadata, *crypto.Encr
 	// If no password provided, prompt for it
 	if password == nil {
 		// This will be handled by the command layer
-		return nil, nil, fmt.Errorf("password required")
+		return nil, nil, ErrPasswordRequired
 	}
 
 	// Derive key
@@ -671,7 +1285,7 @@ func (l *LockEnv) readMetadata(password []byte) (*storage.Metadata, *crypto.Encr
 	enc := crypto.NewEncryptor(key)
 
 	// Verify password with checksum
-	encChecksum, err := l.db.GetMetadata("checksum")
+	encChecksum, err := l.db.GetMetadataBytes("checksum")
 	if err != nil {
 		enc.Destroy()
 		return nil, nil, ErrWrongPassword
@@ -683,14 +1297,14 @@ func (l *LockEnv) readMetadata(password []byte) (*storage.Metadata, *crypto.Encr
 		return nil, nil, ErrWrongPassword
 	}
 
-	checksum := sha256.Sum256([]byte("lockenv-password-check"))
+	checksum := sha256.Sum256([]byte(passwordCheckString))
 	if string(checksumData) != hex.EncodeToString(checksum[:]) {
 		enc.Destroy()
 		return nil, nil, ErrWrongPassword
 	}
 
 	// Read encrypted metadata
-	encMetadata, err := l.db.GetMetadata("files")
+	encMetadata, err := l.db.GetMetadataBytes("files")
 	if err != nil {
 		enc.Destroy()
 		return nil, nil, fmt.Errorf("failed to read metadata: %w", err)
@@ -718,7 +1332,7 @@ func (l *LockEnv) saveMetadata(metadata *storage.Metadata, enc *crypto.Encryptor
 	}
 
 	metadata.Modified = time.Now()
-	
+
 	// Marshal metadata
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
@@ -732,10 +1346,25 @@ func (l *LockEnv) saveMetadata(metadata *storage.Metadata, enc *crypto.Encryptor
 	}
 
 	// Store metadata
-	if err := l.db.StoreMetadata("files", encryptedMetadata); err != nil {
+	if err := l.db.StoreMetadataBytes("files", encryptedMetadata); err != nil {
 		return fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	// Update modification time
 	return l.db.UpdateModified()
+}
+
+// Compact compacts the database to reclaim unused space.
+// This is useful after removing files from the vault.
+func (l *LockEnv) Compact() error {
+	// Open database if not already open
+	if l.db == nil {
+		db, err := storage.Open(l.path)
+		if err != nil {
+			return ErrNotInitialized
+		}
+		defer db.Close()
+		return db.Compact()
+	}
+	return l.db.Compact()
 }

@@ -1,4 +1,4 @@
-module github.com/live-labs/lockenv
+module github.com/illarion/lockenv
 
 go 1.24
 
@@ -8,4 +8,7 @@ require (
 	golang.org/x/term v0.33.0
 )
 
-require golang.org/x/sys v0.34.0 // indirect
+require (
+	github.com/sergi/go-diff v1.4.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
+)

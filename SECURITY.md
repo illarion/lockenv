@@ -8,17 +8,18 @@ lockenv is a CLI tool for securely storing sensitive files in an encrypted conta
 
 ### What We Protect Against
 - **Unauthorized access**: Files are encrypted with AES-256-GCM
-- **Password brute-forcing**: PBKDF2 with 100,000 iterations
+- **Password brute-forcing**: PBKDF2 with 210,000 iterations
 - **Data tampering**: Authenticated encryption prevents modification
-- **Information leakage**: Sensitive metadata is encrypted
+- **Content confidentiality**: All file contents are encrypted with AES-256-GCM
 - **Memory disclosure**: Sensitive data is cleared after use
 - **Database corruption**: BBolt provides ACID guarantees
 
 ### What We Don't Protect Against
 - **Weak passwords**: Users must choose strong passwords
-- **Compromised system**: If the system is compromised during unsealing
+- **Compromised system**: If the system is compromised during unlocking
 - **Side-channel attacks**: Not designed for hostile local environments
 - **Key loggers**: Password entry can be captured
+- **Metadata visibility**: File paths, sizes, and modification times are visible without authentication. Use generic file names if this is a concern.
 
 ## Cryptographic Design
 
@@ -34,7 +35,7 @@ lockenv is a CLI tool for securely storing sensitive files in an encrypted conta
 - Derives encryption key from user password
 - Parameters:
   - Salt: 32 bytes (unique per .lockenv file)
-  - Iterations: 100,000 (default)
+  - Iterations: 210,000 (OWASP minimum recommendation)
   - Key length: 32 bytes (256 bits)
 - Slows down brute-force attacks
 
@@ -50,17 +51,17 @@ lockenv uses BBolt (etcd's fork of BoltDB) as an embedded key-value database:
 
 ```
 .lockenv (BBolt database)
-├── meta bucket (unencrypted)
+├── config bucket (unencrypted)
 │   ├── version     → "1"
 │   ├── created     → timestamp
 │   ├── modified    → timestamp
 │   ├── salt        → 32 bytes (for PBKDF2)
 │   └── iterations  → uint32 (PBKDF2 iterations)
-├── manifest bucket (unencrypted)
+├── index bucket (unencrypted)
 │   └── [file_path] → {path, size, modTime} (JSON)
-├── files bucket (encrypted values)
+├── blobs bucket (encrypted values)
 │   └── [file_path] → [nonce][ciphertext][tag]
-└── metadata bucket (encrypted)
+└── private bucket (encrypted)
     ├── checksum    → encrypted password verification
     └── files       → encrypted file details (JSON)
 ```
@@ -87,10 +88,16 @@ Each encrypted value in BBolt:
 ## Security Properties
 
 ### Confidentiality
+
+**File Contents:**
 - All file contents encrypted with AES-256-GCM
-- Sensitive metadata encrypted in metadata bucket
-- Basic file list in manifest bucket for usability
+- File hashes and detailed metadata encrypted in private bucket
 - No information leakage about file contents
+
+**Index (Unencrypted):**
+- File paths, sizes, and modification times stored unencrypted in index bucket
+- Anyone with repository read access can enumerate tracked files using `lockenv ls` or `lockenv status`
+- If file paths are sensitive, use generic names (e.g., `config1.enc`)
 
 ### Integrity
 - GCM mode provides authenticated encryption
@@ -107,6 +114,34 @@ Each encrypted value in BBolt:
 - Each .lockenv file has unique salt
 - Compromising one file doesn't affect others
 - Password changes re-encrypt everything with new salt
+
+## Memory Management
+lockenv actively clears sensitive data from memory to minimize exposure:
+
+**What gets cleared:**
+- **Passwords**: Cleared immediately after key derivation using `crypto.ClearBytes`
+- **Encryption keys**: Cleared when Encryptor is destroyed (via `defer`)
+- **File contents**: Cleared after encryption (lock) or after writing to disk (unlock)
+- **Decrypted data**: Cleared in all code paths including error paths
+- **Merged data**: Cleared after conflict resolution
+- **Local file contents**: Cleared after comparison during unlock
+
+**When it's cleared:**
+- After each file is processed in lock/unlock operations
+- On error paths using explicit clearing before returns
+- Using defer patterns to ensure cleanup on all exit paths
+- Immediately after data is no longer needed
+
+**Memory exposure window:**
+- Lock: From file read to encryption completion (~milliseconds)
+- Unlock: From decryption to disk write (~milliseconds)
+- Conflict resolution: During user interaction (editor session can be longer)
+- Change password: During re-encryption of all files
+
+**Security guarantees:**
+- No sensitive data persists after function completion
+- Early clearing on error paths prevents leakage
+- Reduced window for process memory dump attacks
 
 ## Implementation Guidelines
 
@@ -148,11 +183,11 @@ db.Update(func(tx *bolt.Tx) error { /* op2 */ })
 ```go
 func (s *Storage) StoreFile(path string, encData []byte) error {
     return s.db.Update(func(tx *bolt.Tx) error {
-        files := tx.Bucket(FilesBucket)
-        if files == nil {
-            return errors.New("files bucket not found")
+        blobs := tx.Bucket(BlobsBucket)
+        if blobs == nil {
+            return errors.New("blobs bucket not found")
         }
-        return files.Put([]byte(path), encData)
+        return blobs.Put([]byte(path), encData)
     })
 }
 ```
@@ -186,19 +221,31 @@ func (s *Storage) StoreFile(path string, encData []byte) error {
 
 ## BBolt Security Considerations
 
-### Why Unencrypted Manifest?
-The manifest bucket stores basic file information unencrypted to enable:
-- `lockenv list` without password
-- `lockenv status` without password
-- Better user experience
+### Unencrypted Index
 
-This is safe because:
-- Only paths and sizes are exposed
-- No file contents or sensitive metadata
-- Similar to `ls -la` information
+The index bucket stores file paths, sizes, and modification times **unencrypted** to enable:
+- `lockenv ls` without password - useful for discovering what files are tracked
+- `lockenv status` without password - shows which tracked files have changed
+- Better user experience for routine operations
+
+**Security implications:**
+- Anyone with repository read access can run `lockenv ls` and `lockenv status`
+- This reveals which files are being encrypted and their sizes
+- File paths may expose information about your application structure
+- Modification times may reveal when secrets were last updated
+
+**What remains protected:**
+- All file contents are encrypted
+- File hashes stored in private bucket (encrypted)
+- The actual secret values are never exposed
+
+**Mitigation:**
+Use generic file names (e.g., `config1.enc`, `config2.enc`) if file paths are sensitive.
+
+**Comparison:** This is similar to `ls -la` output - you can see file names and sizes, but not the contents.
 
 ### Salt Storage
-The salt is stored unencrypted in the meta bucket because:
+The salt is stored unencrypted in the config bucket because:
 - Salt is not secret (only adds uniqueness)
 - Required for key derivation before decryption
 - Standard practice in all encryption systems

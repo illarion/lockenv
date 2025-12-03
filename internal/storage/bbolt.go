@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -10,19 +12,19 @@ import (
 
 // Bucket names
 var (
-	MetaBucket     = []byte("meta")
-	ManifestBucket = []byte("manifest")
-	FilesBucket    = []byte("files")
-	MetadataBucket = []byte("metadata")
+	ConfigBucket  = []byte("config")  // KDF params (salt, iterations), timestamps - unencrypted
+	IndexBucket   = []byte("index")   // Public file list for ls/status - unencrypted
+	BlobsBucket   = []byte("blobs")   // Encrypted file contents
+	PrivateBucket = []byte("private") // Encrypted checksum + file details
 )
 
-// Meta keys
+// Config keys
 var (
-	MetaVersion  = []byte("version")
-	MetaCreated  = []byte("created")
-	MetaModified = []byte("modified")
-	MetaSalt     = []byte("salt")
-	MetaIters    = []byte("iterations")
+	ConfigVersion  = []byte("version")
+	ConfigCreated  = []byte("created")
+	ConfigModified = []byte("modified")
+	ConfigSalt     = []byte("salt")
+	ConfigIters    = []byte("iterations")
 )
 
 // Storage provides BBolt-based storage for lockenv
@@ -49,25 +51,25 @@ func (s *Storage) Close() error {
 func (s *Storage) Initialize() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		// Create all buckets
-		for _, bucket := range [][]byte{MetaBucket, ManifestBucket, FilesBucket, MetadataBucket} {
+		for _, bucket := range [][]byte{ConfigBucket, IndexBucket, BlobsBucket, PrivateBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return fmt.Errorf("failed to create bucket %s: %w", bucket, err)
 			}
 		}
 
 		// Set version
-		meta := tx.Bucket(MetaBucket)
-		if err := meta.Put(MetaVersion, []byte("1")); err != nil {
+		config := tx.Bucket(ConfigBucket)
+		if err := config.Put(ConfigVersion, []byte("1")); err != nil {
 			return err
 		}
 
 		// Set creation time
 		now := time.Now()
 		created, _ := now.MarshalBinary()
-		if err := meta.Put(MetaCreated, created); err != nil {
+		if err := config.Put(ConfigCreated, created); err != nil {
 			return err
 		}
-		if err := meta.Put(MetaModified, created); err != nil {
+		if err := config.Put(ConfigModified, created); err != nil {
 			return err
 		}
 
@@ -76,23 +78,23 @@ func (s *Storage) Initialize() error {
 }
 
 // IsInitialized checks if the database has been initialized
-func (s *Storage) IsInitialized() bool {
+func (s *Storage) IsInitialized() (bool, error) {
 	var initialized bool
-	s.db.View(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
-		if meta != nil && meta.Get(MetaVersion) != nil {
+	err := s.db.View(func(tx *bolt.Tx) error {
+		config := tx.Bucket(ConfigBucket)
+		if config != nil && config.Get(ConfigVersion) != nil {
 			initialized = true
 		}
 		return nil
 	})
-	return initialized
+	return initialized, err
 }
 
 // SetSalt stores the KDF salt
 func (s *Storage) SetSalt(salt []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
-		return meta.Put(MetaSalt, salt)
+		config := tx.Bucket(ConfigBucket)
+		return config.Put(ConfigSalt, salt)
 	})
 }
 
@@ -100,11 +102,11 @@ func (s *Storage) SetSalt(salt []byte) error {
 func (s *Storage) GetSalt() ([]byte, error) {
 	var salt []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
-		if meta == nil {
-			return fmt.Errorf("meta bucket not found")
+		config := tx.Bucket(ConfigBucket)
+		if config == nil {
+			return fmt.Errorf("config bucket not found")
 		}
-		salt = meta.Get(MetaSalt)
+		salt = config.Get(ConfigSalt)
 		if salt == nil {
 			return fmt.Errorf("salt not found")
 		}
@@ -118,13 +120,10 @@ func (s *Storage) GetSalt() ([]byte, error) {
 // SetIterations stores the KDF iterations
 func (s *Storage) SetIterations(iterations uint32) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
+		config := tx.Bucket(ConfigBucket)
 		iters := make([]byte, 4)
-		iters[0] = byte(iterations >> 24)
-		iters[1] = byte(iterations >> 16)
-		iters[2] = byte(iterations >> 8)
-		iters[3] = byte(iterations)
-		return meta.Put(MetaIters, iters)
+		binary.BigEndian.PutUint32(iters, iterations)
+		return config.Put(ConfigIters, iters)
 	})
 }
 
@@ -132,15 +131,15 @@ func (s *Storage) SetIterations(iterations uint32) error {
 func (s *Storage) GetIterations() (uint32, error) {
 	var iterations uint32
 	err := s.db.View(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
-		if meta == nil {
-			return fmt.Errorf("meta bucket not found")
+		config := tx.Bucket(ConfigBucket)
+		if config == nil {
+			return fmt.Errorf("config bucket not found")
 		}
-		iters := meta.Get(MetaIters)
+		iters := config.Get(ConfigIters)
 		if iters == nil || len(iters) != 4 {
 			return fmt.Errorf("iterations not found")
 		}
-		iterations = uint32(iters[0])<<24 | uint32(iters[1])<<16 | uint32(iters[2])<<8 | uint32(iters[3])
+		iterations = binary.BigEndian.Uint32(iters)
 		return nil
 	})
 	return iterations, err
@@ -149,10 +148,10 @@ func (s *Storage) GetIterations() (uint32, error) {
 // UpdateModified updates the last modified timestamp
 func (s *Storage) UpdateModified() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
+		config := tx.Bucket(ConfigBucket)
 		now := time.Now()
 		modified, _ := now.MarshalBinary()
-		return meta.Put(MetaModified, modified)
+		return config.Put(ConfigModified, modified)
 	})
 }
 
@@ -160,11 +159,11 @@ func (s *Storage) UpdateModified() error {
 func (s *Storage) GetModified() (time.Time, error) {
 	var modified time.Time
 	err := s.db.View(func(tx *bolt.Tx) error {
-		meta := tx.Bucket(MetaBucket)
-		if meta == nil {
-			return fmt.Errorf("meta bucket not found")
+		config := tx.Bucket(ConfigBucket)
+		if config == nil {
+			return fmt.Errorf("config bucket not found")
 		}
-		data := meta.Get(MetaModified)
+		data := config.Get(ConfigModified)
 		if data == nil {
 			return fmt.Errorf("modified time not found")
 		}
@@ -178,16 +177,18 @@ type ManifestEntry struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"modTime"`
+	Hash    string    `json:"hash"` // Content hash for change detection
 }
 
 // UpdateManifest updates a file entry in the manifest
-func (s *Storage) UpdateManifest(path string, size int64, modTime time.Time) error {
+func (s *Storage) UpdateManifest(path string, size int64, modTime time.Time, hash string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		manifest := tx.Bucket(ManifestBucket)
+		manifest := tx.Bucket(IndexBucket)
 		entry := ManifestEntry{
 			Path:    path,
 			Size:    size,
 			ModTime: modTime,
+			Hash:    hash,
 		}
 		data, err := json.Marshal(entry)
 		if err != nil {
@@ -200,7 +201,7 @@ func (s *Storage) UpdateManifest(path string, size int64, modTime time.Time) err
 // RemoveFromManifest removes a file from the manifest
 func (s *Storage) RemoveFromManifest(path string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		manifest := tx.Bucket(ManifestBucket)
+		manifest := tx.Bucket(IndexBucket)
 		return manifest.Delete([]byte(path))
 	})
 }
@@ -209,9 +210,9 @@ func (s *Storage) RemoveFromManifest(path string) error {
 func (s *Storage) GetManifest() ([]ManifestEntry, error) {
 	var entries []ManifestEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		manifest := tx.Bucket(ManifestBucket)
+		manifest := tx.Bucket(IndexBucket)
 		if manifest == nil {
-			return nil
+			return fmt.Errorf("index bucket not found")
 		}
 		return manifest.ForEach(func(k, v []byte) error {
 			var entry ManifestEntry
@@ -229,9 +230,9 @@ func (s *Storage) GetManifest() ([]ManifestEntry, error) {
 func (s *Storage) GetManifestEntry(path string) (*ManifestEntry, error) {
 	var entry *ManifestEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		manifest := tx.Bucket(ManifestBucket)
+		manifest := tx.Bucket(IndexBucket)
 		if manifest == nil {
-			return fmt.Errorf("manifest bucket not found")
+			return fmt.Errorf("index bucket not found")
 		}
 		data := manifest.Get([]byte(path))
 		if data == nil {
@@ -243,23 +244,23 @@ func (s *Storage) GetManifestEntry(path string) (*ManifestEntry, error) {
 	return entry, err
 }
 
-// StoreFile stores an encrypted file
-func (s *Storage) StoreFile(path string, encryptedData []byte) error {
+// StoreFileData stores encrypted file data
+func (s *Storage) StoreFileData(path string, encryptedData []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		files := tx.Bucket(FilesBucket)
-		return files.Put([]byte(path), encryptedData)
+		blobs := tx.Bucket(BlobsBucket)
+		return blobs.Put([]byte(path), encryptedData)
 	})
 }
 
-// GetFile retrieves an encrypted file
-func (s *Storage) GetFile(path string) ([]byte, error) {
+// GetFileData retrieves encrypted file data
+func (s *Storage) GetFileData(path string) ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		files := tx.Bucket(FilesBucket)
-		if files == nil {
-			return fmt.Errorf("files bucket not found")
+		blobs := tx.Bucket(BlobsBucket)
+		if blobs == nil {
+			return fmt.Errorf("blobs bucket not found")
 		}
-		data = files.Get([]byte(path))
+		data = blobs.Get([]byte(path))
 		if data == nil {
 			return fmt.Errorf("file not found")
 		}
@@ -273,28 +274,28 @@ func (s *Storage) GetFile(path string) ([]byte, error) {
 // RemoveFile removes a file from storage
 func (s *Storage) RemoveFile(path string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		files := tx.Bucket(FilesBucket)
-		return files.Delete([]byte(path))
+		blobs := tx.Bucket(BlobsBucket)
+		return blobs.Delete([]byte(path))
 	})
 }
 
-// StoreMetadata stores encrypted metadata
-func (s *Storage) StoreMetadata(key string, encryptedData []byte) error {
+// StoreMetadataBytes stores encrypted metadata bytes
+func (s *Storage) StoreMetadataBytes(key string, encryptedData []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		metadata := tx.Bucket(MetadataBucket)
-		return metadata.Put([]byte(key), encryptedData)
+		private := tx.Bucket(PrivateBucket)
+		return private.Put([]byte(key), encryptedData)
 	})
 }
 
-// GetMetadata retrieves encrypted metadata
-func (s *Storage) GetMetadata(key string) ([]byte, error) {
+// GetMetadataBytes retrieves encrypted metadata bytes
+func (s *Storage) GetMetadataBytes(key string) ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		metadata := tx.Bucket(MetadataBucket)
-		if metadata == nil {
-			return fmt.Errorf("metadata bucket not found")
+		private := tx.Bucket(PrivateBucket)
+		if private == nil {
+			return fmt.Errorf("private bucket not found")
 		}
-		data = metadata.Get([]byte(key))
+		data = private.Get([]byte(key))
 		if data == nil {
 			return fmt.Errorf("metadata not found")
 		}
@@ -305,32 +306,11 @@ func (s *Storage) GetMetadata(key string) ([]byte, error) {
 	return data, err
 }
 
-// Transaction provides a way to perform multiple operations atomically
-func (s *Storage) Transaction(writable bool, fn func(tx *Transaction) error) error {
-	return s.db.Update(func(btx *bolt.Tx) error {
-		tx := &Transaction{tx: btx}
-		return fn(tx)
-	})
-}
-
-// ViewTransaction provides a read-only transaction
-func (s *Storage) ViewTransaction(fn func(tx *Transaction) error) error {
-	return s.db.View(func(btx *bolt.Tx) error {
-		tx := &Transaction{tx: btx}
-		return fn(tx)
-	})
-}
-
-// Transaction wraps a bolt transaction
-type Transaction struct {
-	tx *bolt.Tx
-}
-
 // GetTrackedFiles returns all tracked file paths from the manifest
 func (s *Storage) GetTrackedFiles() ([]string, error) {
 	var files []string
 	err := s.db.View(func(tx *bolt.Tx) error {
-		manifest := tx.Bucket(ManifestBucket)
+		manifest := tx.Bucket(IndexBucket)
 		if manifest == nil {
 			return nil
 		}
@@ -340,4 +320,67 @@ func (s *Storage) GetTrackedFiles() ([]string, error) {
 		})
 	})
 	return files, err
+}
+
+// Compact creates a compacted copy of the database, removing unused space.
+// This is useful after deleting files to reclaim disk space.
+func (s *Storage) Compact() error {
+	srcPath := s.db.Path()
+	tmpPath := srcPath + ".compact"
+
+	// Create new database
+	dst, err := bolt.Open(tmpPath, 0600, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create compact database: %w", err)
+	}
+
+	// Copy all buckets
+	err = s.db.View(func(srcTx *bolt.Tx) error {
+		return dst.Update(func(dstTx *bolt.Tx) error {
+			return srcTx.ForEach(func(name []byte, srcBucket *bolt.Bucket) error {
+				dstBucket, err := dstTx.CreateBucketIfNotExists(name)
+				if err != nil {
+					return err
+				}
+				return srcBucket.ForEach(func(k, v []byte) error {
+					return dstBucket.Put(k, v)
+				})
+			})
+		})
+	})
+
+	if err != nil {
+		dst.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to copy data: %w", err)
+	}
+
+	if err := dst.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close compact database: %w", err)
+	}
+
+	if err := s.db.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close source database: %w", err)
+	}
+
+	// Atomic replace
+	backupPath := srcPath + ".backup"
+	if err := os.Rename(srcPath, backupPath); err != nil {
+		return fmt.Errorf("failed to backup original: %w", err)
+	}
+	if err := os.Rename(tmpPath, srcPath); err != nil {
+		os.Rename(backupPath, srcPath) // rollback
+		return fmt.Errorf("failed to replace database: %w", err)
+	}
+	os.Remove(backupPath)
+
+	// Reopen database
+	s.db, err = bolt.Open(srcPath, 0600, nil)
+	if err != nil {
+		return fmt.Errorf("failed to reopen database: %w", err)
+	}
+
+	return nil
 }
