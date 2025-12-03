@@ -1,0 +1,49 @@
+version: 2
+
+project_name: lockenv
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - binary: lockenv
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - package_name: lockenv
+    vendor: Illarion Kovalchuk
+    homepage: https://github.com/illarion/lockenv
+    maintainer: Illarion Kovalchuk
+    description: Simple, CLI-friendly secret storage
+    license: MIT
+    formats:
+      - deb
+      - rpm
+
+brews:
+  - repository:
+      owner: illarion
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/illarion/lockenv
+    description: Simple, CLI-friendly secret storage
+    license: MIT
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
