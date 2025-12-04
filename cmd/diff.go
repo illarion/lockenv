@@ -15,8 +15,14 @@ func Diff(ctx context.Context) {
 	}
 	defer lockenv.Close()
 
-	// Get password
-	password := GetPasswordOrExit("Enter password: ")
+	// Get vault ID for keyring lookup
+	vaultID, _ := lockenv.GetVaultID()
+
+	// Get password with retry on stale keyring
+	password, _, err := GetPasswordWithRetry("Enter password: ", vaultID, lockenv.VerifyPassword)
+	if err != nil {
+		HandleError(err)
+	}
 	defer crypto.ClearBytes(password)
 
 	// Show diff

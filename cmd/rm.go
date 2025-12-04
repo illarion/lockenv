@@ -23,8 +23,14 @@ func Remove(ctx context.Context, patterns []string) {
 	}
 	defer lockenv.Close()
 
-	// Get password once for both operations
-	password := GetPasswordOrExit("Enter password: ")
+	// Get vault ID for keyring lookup
+	vaultID, _ := lockenv.GetVaultID()
+
+	// Get password with retry on stale keyring
+	password, _, err := GetPasswordWithRetry("Enter password: ", vaultID, lockenv.VerifyPassword)
+	if err != nil {
+		HandleError(err)
+	}
 	defer crypto.ClearBytes(password)
 
 	// Remove files from vault

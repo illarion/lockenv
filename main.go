@@ -41,6 +41,8 @@ func main() {
 		runCompact(ctx, os.Args[2:])
 	case "completion":
 		runCompletion(ctx, os.Args[2:])
+	case "keyring":
+		runKeyring(ctx, os.Args[2:])
 	case "help", "-h", "--help":
 		if len(os.Args) <= 2 {
 			printUsage()
@@ -166,6 +168,26 @@ func runCompletion(_ context.Context, args []string) {
 	cmd.Completion(args[0])
 }
 
+func runKeyring(_ context.Context, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: lockenv keyring <save|delete|status>")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "save":
+		cmd.KeyringSave()
+	case "delete":
+		cmd.KeyringDelete()
+	case "status":
+		cmd.KeyringStatus()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown keyring subcommand: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "Usage: lockenv keyring <save|delete|status>")
+		os.Exit(1)
+	}
+}
+
 func printUsage() {
 	fmt.Println("lockenv - Simple, CLI-friendly secret storage")
 	fmt.Println()
@@ -181,6 +203,7 @@ func printUsage() {
 	fmt.Println("  passwd      Change vault password")
 	fmt.Println("  diff        Compare vault contents with local files")
 	fmt.Println("  compact     Compact vault to reclaim disk space")
+	fmt.Println("  keyring     Manage password in OS keyring")
 	fmt.Println("  completion  Generate shell completions")
 	fmt.Println("  help        Show help for a command")
 	fmt.Println()
@@ -189,6 +212,7 @@ func printUsage() {
 	fmt.Println("  lockenv lock .env --rm          # Lock .env and remove original")
 	fmt.Println("  lockenv unlock                  # Unlock all files")
 	fmt.Println("  lockenv status                  # Check vault status")
+	fmt.Println("  lockenv keyring save            # Save password to OS keyring")
 	fmt.Println()
 	fmt.Println("Use 'lockenv help <command>' for more information about a command.")
 }
@@ -318,6 +342,24 @@ func printCommandHelp(command string) {
 		fmt.Println()
 		fmt.Println("  # Fish - add to ~/.config/fish/config.fish")
 		fmt.Println("  lockenv completion fish | source")
+	case "keyring":
+		fmt.Println("lockenv keyring <save|delete|status>")
+		fmt.Println()
+		fmt.Println("Manages password storage in the OS keyring (GNOME Keyring, KDE Wallet, macOS Keychain).")
+		fmt.Println("When a password is stored in the keyring, you won't need to enter it for each command.")
+		fmt.Println()
+		fmt.Println("Subcommands:")
+		fmt.Println("  save      Save password to keyring (prompts for password)")
+		fmt.Println("  delete    Remove password from keyring")
+		fmt.Println("  status    Check if password is stored in keyring")
+		fmt.Println()
+		fmt.Println("The keyring password is tied to your vault, so moving .lockenv to")
+		fmt.Println("a different location will still use the same stored password.")
+		fmt.Println()
+		fmt.Println("Examples:")
+		fmt.Println("  lockenv keyring save      # Save password for easy access")
+		fmt.Println("  lockenv keyring status    # Check if password is stored")
+		fmt.Println("  lockenv keyring delete    # Remove password from keyring")
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		printUsage()

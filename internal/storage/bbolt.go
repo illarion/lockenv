@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +27,7 @@ var (
 	ConfigModified = []byte("modified")
 	ConfigSalt     = []byte("salt")
 	ConfigIters    = []byte("iterations")
+	ConfigVaultID  = []byte("vault_id")
 )
 
 // Storage provides BBolt-based storage for lockenv
@@ -170,6 +173,50 @@ func (s *Storage) GetModified() (time.Time, error) {
 		return modified.UnmarshalBinary(data)
 	})
 	return modified, err
+}
+
+// GetVaultID retrieves the vault ID from config bucket
+func (s *Storage) GetVaultID() (string, error) {
+	var vaultID string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		config := tx.Bucket(ConfigBucket)
+		if config == nil {
+			return fmt.Errorf("config bucket not found")
+		}
+		data := config.Get(ConfigVaultID)
+		if data == nil {
+			return fmt.Errorf("vault_id not found")
+		}
+		vaultID = string(data)
+		return nil
+	})
+	return vaultID, err
+}
+
+// GetOrCreateVaultID retrieves existing vault ID or generates a new one
+func (s *Storage) GetOrCreateVaultID() (string, error) {
+	vaultID, err := s.GetVaultID()
+	if err == nil {
+		return vaultID, nil
+	}
+
+	// Generate new UUID
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate vault ID: %w", err)
+	}
+	vaultID = hex.EncodeToString(b)
+
+	// Store it
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		config := tx.Bucket(ConfigBucket)
+		return config.Put(ConfigVaultID, []byte(vaultID))
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return vaultID, nil
 }
 
 // ManifestEntry represents a file in the manifest

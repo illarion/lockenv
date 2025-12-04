@@ -17,8 +17,14 @@ func Lock(ctx context.Context, patterns []string, remove bool) {
 	}
 	defer lockenv.Close()
 
-	// Get password once for both operations
-	password := GetPasswordOrExit("Enter password: ")
+	// Get vault ID for keyring lookup
+	vaultID, _ := lockenv.GetVaultID()
+
+	// Get password with retry on stale keyring
+	password, _, err := GetPasswordWithRetry("Enter password: ", vaultID, lockenv.VerifyPassword)
+	if err != nil {
+		HandleError(err)
+	}
 	defer crypto.ClearBytes(password)
 
 	// Add files to vault
@@ -40,8 +46,14 @@ func LockAll(ctx context.Context, remove bool, force bool) {
 	}
 	defer lockenv.Close()
 
-	// Get password first (needed for hash comparison)
-	password := GetPasswordOrExit("Enter password: ")
+	// Get vault ID for keyring lookup
+	vaultID, _ := lockenv.GetVaultID()
+
+	// Get password with retry on stale keyring
+	password, _, err := GetPasswordWithRetry("Enter password: ", vaultID, lockenv.VerifyPassword)
+	if err != nil {
+		HandleError(err)
+	}
 	defer crypto.ClearBytes(password)
 
 	// Analyze all tracked files

@@ -24,8 +24,14 @@ func Unlock(ctx context.Context, patterns []string, force bool, keepLocal bool, 
 	}
 	defer lockenv.Close()
 
-	// Get password
-	password := GetPasswordOrExit("Enter password: ")
+	// Get vault ID for keyring lookup
+	vaultID, _ := lockenv.GetVaultID()
+
+	// Get password with retry on stale keyring
+	password, source, err := GetPasswordWithRetry("Enter password: ", vaultID, lockenv.VerifyPassword)
+	if err != nil {
+		HandleError(err)
+	}
 	defer crypto.ClearBytes(password)
 
 	// Determine merge strategy
@@ -57,5 +63,14 @@ func Unlock(ctx context.Context, patterns []string, force bool, keepLocal bool, 
 	}
 	if len(result.Errors) > 0 {
 		fmt.Printf("error: %d errors occurred\n", len(result.Errors))
+	}
+
+	// Offer to save password if it was entered manually
+	if source == SourcePrompt {
+		vaultID, err := lockenv.GetOrCreateVaultID()
+		if err != nil {
+			return
+		}
+		OfferToSavePassword(vaultID, password)
 	}
 }

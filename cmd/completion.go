@@ -24,7 +24,7 @@ const bashCompletion = `_lockenv() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init lock unlock rm ls status passwd diff compact help completion"
+    local commands="init lock unlock rm ls status passwd diff compact keyring help completion"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -56,6 +56,9 @@ const bashCompletion = `_lockenv() {
             files=$(lockenv ls 2>/dev/null | grep -E '^\s+[.*]' | sed 's/^.*[.*] //' | sed 's/ (.*//')
             COMPREPLY=($(compgen -W "$files" -- "$cur"))
             ;;
+        keyring)
+            COMPREPLY=($(compgen -W "save delete status" -- "$cur"))
+            ;;
         help)
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
             ;;
@@ -82,6 +85,7 @@ _lockenv() {
         'passwd:Change vault password'
         'diff:Compare vault contents with local files'
         'compact:Compact vault to reclaim disk space'
+        'keyring:Manage password in OS keyring'
         'help:Show help for a command'
         'completion:Generate shell completions'
     )
@@ -113,6 +117,9 @@ _lockenv() {
                 rm)
                     _arguments '*:vault file:_lockenv_vault_files'
                     ;;
+                keyring)
+                    _values 'subcommand' save delete status
+                    ;;
                 help)
                     _describe -t commands 'lockenv commands' commands
                     ;;
@@ -135,7 +142,7 @@ _lockenv "$@"
 
 const fishCompletion = `# lockenv fish completions
 
-set -l commands init lock unlock rm ls status passwd diff compact help completion
+set -l commands init lock unlock rm ls status passwd diff compact keyring help completion
 
 complete -c lockenv -f
 
@@ -149,6 +156,7 @@ complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a status -d 
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a passwd -d 'Change vault password'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a diff -d 'Compare vault with local'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a compact -d 'Compact vault'
+complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a keyring -d 'Manage password in OS keyring'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a help -d 'Show help'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a completion -d 'Generate completions'
 
@@ -162,6 +170,9 @@ complete -c lockenv -n "__fish_seen_subcommand_from lock" -F
 complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l force -d 'Overwrite local files'
 complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l keep-local -d 'Keep local versions'
 complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l keep-both -d 'Keep both versions'
+
+# keyring subcommands
+complete -c lockenv -n "__fish_seen_subcommand_from keyring" -a "save delete status"
 
 # help completions
 complete -c lockenv -n "__fish_seen_subcommand_from help" -a "$commands"

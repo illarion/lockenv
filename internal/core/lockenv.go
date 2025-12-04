@@ -1399,3 +1399,55 @@ func (l *LockEnv) Compact() error {
 	}
 	return l.db.Compact()
 }
+
+// GetVaultID retrieves the vault ID from storage
+func (l *LockEnv) GetVaultID() (string, error) {
+	if _, err := os.Stat(l.path); err != nil {
+		return "", ErrNotInitialized
+	}
+
+	db, err := storage.Open(l.path)
+	if err != nil {
+		return "", ErrNotInitialized
+	}
+	defer db.Close()
+
+	return db.GetVaultID()
+}
+
+// GetOrCreateVaultID retrieves existing vault ID or generates a new one
+func (l *LockEnv) GetOrCreateVaultID() (string, error) {
+	if _, err := os.Stat(l.path); err != nil {
+		return "", ErrNotInitialized
+	}
+
+	db, err := storage.Open(l.path)
+	if err != nil {
+		return "", ErrNotInitialized
+	}
+	defer db.Close()
+
+	return db.GetOrCreateVaultID()
+}
+
+// VerifyPassword checks if the password is correct for this vault
+func (l *LockEnv) VerifyPassword(password []byte) error {
+	if _, err := os.Stat(l.path); err != nil {
+		return ErrNotInitialized
+	}
+
+	db, err := storage.Open(l.path)
+	if err != nil {
+		return ErrNotInitialized
+	}
+	defer db.Close()
+	l.db = db
+
+	_, enc, err := l.readMetadata(password)
+	if err != nil {
+		return err
+	}
+	enc.Destroy()
+
+	return nil
+}

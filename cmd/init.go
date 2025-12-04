@@ -31,4 +31,11 @@ func Init() {
 	}
 
 	fmt.Println("initialized: .lockenv")
+
+	// Offer to save password to keyring
+	vaultID, err := lockenv.GetOrCreateVaultID()
+	if err != nil {
+		return
+	}
+	OfferToSavePassword(vaultID, password)
 }
