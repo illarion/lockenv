@@ -404,83 +404,37 @@ func hasConflictMarkers(data []byte) bool {
 		bytes.Contains(data, []byte(">>>>>>>"))
 }
 
-// GenerateUnifiedDiff generates a unified diff using the system diff command
+// GenerateUnifiedDiff generates a unified diff using go-diff library
 // Returns the diff output, or empty string if files are identical
 func GenerateUnifiedDiff(path string, vaultData, localData []byte) (string, error) {
-	// Quick check if files are identical
 	if CompareFiles(vaultData, localData) {
 		return "", nil
 	}
 
-	// Create temporary files for diff
-	vaultTmp, err := os.CreateTemp("", "lockenv-vault-*")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(vaultTmp.Name())
-	if err := os.Chmod(vaultTmp.Name(), 0600); err != nil {
-		return "", fmt.Errorf("failed to set temp file permissions: %w", err)
-	}
-
-	localTmp, err := os.CreateTemp("", "lockenv-local-*")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer os.Remove(localTmp.Name())
-	if err := os.Chmod(localTmp.Name(), 0600); err != nil {
-		return "", fmt.Errorf("failed to set temp file permissions: %w", err)
-	}
-
-	// Write data to temp files
-	if _, err := vaultTmp.Write(vaultData); err != nil {
-		return "", fmt.Errorf("failed to write vault data: %w", err)
-	}
-	if err := vaultTmp.Close(); err != nil {
-		return "", fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if _, err := localTmp.Write(localData); err != nil {
-		return "", fmt.Errorf("failed to write local data: %w", err)
-	}
-	if err := localTmp.Close(); err != nil {
-		return "", fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Check if diff command is available
-	diffCmd := "diff"
-	if _, err := exec.LookPath(diffCmd); err != nil {
-		// Diff not available - provide simple comparison
-		return generateSimpleDiff(path, vaultData, localData), nil
-	}
-
-	// Run diff -u (unified format)
-	cmd := exec.Command(diffCmd, "-u", "--label=a/"+path, "--label=b/"+path, vaultTmp.Name(), localTmp.Name())
-	output, err := cmd.CombinedOutput()
-
-	if err == nil {
-		return string(output), nil
-	}
-	// diff returns exit code 1 when files differ (not an error)
-	exitErr, ok := err.(*exec.ExitError)
-	if ok && exitErr.ExitCode() == 1 {
-		return string(output), nil
-	}
-	return "", fmt.Errorf("diff command failed: %w", err)
-}
-
-// generateSimpleDiff provides a fallback when system diff is not available
-func generateSimpleDiff(path string, vaultData, localData []byte) string {
 	// Check if binary
 	if !DetectFileType(vaultData) || !DetectFileType(localData) {
-		return fmt.Sprintf("Binary file %s has changed\n", path)
+		return fmt.Sprintf("Binary file %s has changed\n", path), nil
 	}
 
+	dmp := diffmatchpatch.New()
+
+	// Line-mode diff for better output
+	vaultStr, localStr := string(vaultData), string(localData)
+	a, b, lineArray := dmp.DiffLinesToChars(vaultStr, localStr)
+	diffs := dmp.DiffMain(a, b, false)
+	diffs = dmp.DiffCharsToLines(diffs, lineArray)
+
+	// Create patches and format
+	patches := dmp.PatchMake(vaultStr, diffs)
+	if len(patches) == 0 {
+		return "", nil
+	}
+
+	// Add file headers and format output
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("--- a/%s\n", path))
 	result.WriteString(fmt.Sprintf("+++ b/%s\n", path))
-	result.WriteString("(diff command not available - showing summary)\n")
-	result.WriteString(fmt.Sprintf("Vault version: %d bytes\n", len(vaultData)))
-	result.WriteString(fmt.Sprintf("Local version: %d bytes\n", len(localData)))
+	result.WriteString(dmp.PatchToText(patches))
 
-	return result.String()
+	return result.String(), nil
 }
