@@ -1,0 +1,63 @@
+#compdef lockenv
+
+_lockenv() {
+    local -a commands
+    commands=(
+        'init:Create a .lockenv vault in current directory'
+        'lock:Encrypt and store files in the vault'
+        'unlock:Decrypt and restore files from the vault'
+        'rm:Remove files from the vault'
+        'ls:Show comprehensive vault status'
+        'status:Show comprehensive vault status'
+        'passwd:Change vault password'
+        'diff:Compare vault contents with local files'
+        'compact:Compact vault to reclaim disk space'
+        'help:Show help for a command'
+        'completion:Generate shell completions'
+    )
+
+    _arguments -C \
+        '1: :->command' \
+        '*: :->args'
+
+    case "$state" in
+        command)
+            _describe -t commands 'lockenv commands' commands
+            ;;
+        args)
+            case "${words[2]}" in
+                lock)
+                    _arguments \
+                        '-r[Remove original files after locking]' \
+                        '--remove[Remove original files after locking]' \
+                        '--force[Lock without confirmation]' \
+                        '*:file:_files'
+                    ;;
+                unlock)
+                    _arguments \
+                        '--force[Overwrite local files without asking]' \
+                        '--keep-local[Skip all conflicts, keep local versions]' \
+                        '--keep-both[Keep both local and vault versions]' \
+                        '*:vault file:_lockenv_vault_files'
+                    ;;
+                rm)
+                    _arguments '*:vault file:_lockenv_vault_files'
+                    ;;
+                help)
+                    _describe -t commands 'lockenv commands' commands
+                    ;;
+                completion)
+                    _values 'shell' bash zsh fish
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_lockenv_vault_files() {
+    local -a files
+    files=(${(f)"$(lockenv ls 2>/dev/null | grep -E '^\s+[.*]' | sed 's/^.*[.*] //' | sed 's/ (.*//')"})
+    _describe -t files 'vault files' files
+}
+
+_lockenv "$@"

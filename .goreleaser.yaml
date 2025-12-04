@@ -5,11 +5,6 @@ project_name: lockenv
 before:
   hooks:
     - go mod tidy
-    - go build -o lockenv .
-    - mkdir -p completions
-    - ./lockenv completion bash > completions/lockenv.bash
-    - ./lockenv completion zsh > completions/_lockenv
-    - ./lockenv completion fish > completions/lockenv.fish
 
 builds:
   - binary: lockenv
@@ -26,8 +21,7 @@ archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
-      - src: ./completions/*
-        dst: completions
+      - completions/*
 
 nfpms:
   - package_name: lockenv
@@ -42,10 +36,16 @@ nfpms:
     contents:
       - src: ./completions/lockenv.bash
         dst: /usr/share/bash-completion/completions/lockenv
+        file_info:
+          mode: 0644
       - src: ./completions/_lockenv
         dst: /usr/share/zsh/vendor-completions/_lockenv
+        file_info:
+          mode: 0644
       - src: ./completions/lockenv.fish
         dst: /usr/share/fish/vendor_completions.d/lockenv.fish
+        file_info:
+          mode: 0644
 
 homebrew_casks:
   - repository:
