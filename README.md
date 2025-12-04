@@ -2,9 +2,21 @@
 
 Simple, CLI-friendly secret storage that lets you safely commit encrypted secrets to version control.
 
+> For small teams who want something simpler than sops/git-crypt for .env and infra secrets.
+
 ## Overview
 
 lockenv provides a secure way to store sensitive files (like `.env` files, configuration files, certificates) in an encrypted `.lockenv` file that can be safely committed to your repository. Files are encrypted using a password-derived key and can be easily extracted when needed.
+
+## How is this different?
+
+| Feature | lockenv | git-crypt | sops |
+|---------|---------|-----------|------|
+| Format | Single vault file | Transparent per-file | YAML/JSON native |
+| Auth | Password (PBKDF2) | GPG keys | KMS/PGP/age |
+| Git integration | Manual (lock/unlock) | Transparent (git filter) | Manual |
+| Setup | `lockenv init` | GPG key exchange | KMS/key config |
+| Best for | Simple .env/config | Large teams, many devs | Cloud infra, key rotation |
 
 ## Installation
 
@@ -235,7 +247,7 @@ password changed successfully
 ```
 
 ### `lockenv diff`
-Shows actual content differences between vault and local files (like `git diff`). Uses the system `diff` command for professional unified diff output.
+Shows actual content differences between vault and local files (like `git diff`).
 
 ```bash
 $ lockenv diff
@@ -328,6 +340,17 @@ Compacted: 45.2 KB -> 12.1 KB
 - **Memory Safety**: Sensitive data is cleared from memory after use.
 - **Version Control**: Only commit the `.lockenv` file, never commit unencrypted sensitive files.
 
+## Threat Model
+
+**lockenv protects against:**
+- Secrets exposed in git history or repository leaks
+- Unauthorized repository access without the password
+- Dev laptops without the password
+
+**lockenv does NOT protect against:**
+- Compromised CI runner (sees plaintext after unlock)
+- Attacker who has the password
+
 ## Environment Variables
 
 ### LOCKENV_PASSWORD
@@ -340,6 +363,38 @@ lockenv unlock
 ```
 
 **Security warning:** Environment variables may be visible to other processes on the system (via `/proc/<pid>/environ` on Linux or process inspection tools). Use this feature only in isolated CI/CD environments where process inspection by other users is not a concern. For interactive use, prefer the terminal prompt.
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lockenv
+        run: |
+          curl -sL https://github.com/illarion/lockenv/releases/latest/download/lockenv_linux_amd64.tar.gz | tar xz
+          sudo mv lockenv /usr/local/bin/
+      - name: Unlock secrets
+        env:
+          LOCKENV_PASSWORD: ${{ secrets.LOCKENV_PASSWORD }}
+        run: lockenv unlock
+```
+
+### GitLab CI
+
+```yaml
+deploy:
+  before_script:
+    - curl -sL https://github.com/illarion/lockenv/releases/latest/download/lockenv_linux_amd64.tar.gz | tar xz
+    - mv lockenv /usr/local/bin/
+    - lockenv unlock
+  variables:
+    LOCKENV_PASSWORD: $LOCKENV_PASSWORD
+```
 
 ## Shell Completions
 
@@ -425,3 +480,10 @@ terraform.tfstate.backup
 .terraform/
 !.lockenv
 ```
+
+## Limitations
+
+- **File size**: Files are loaded entirely into memory for encryption. Not recommended for large binary files (>100MB).
+- **Single password**: One password for the entire vault. No per-user or per-file access control.
+
+For feature requests or issues, see [GitHub Issues](https://github.com/illarion/lockenv/issues).
