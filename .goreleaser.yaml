@@ -26,7 +26,8 @@ archives:
   - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
-      - completions/*
+      - src: ./completions/*
+        dst: completions
 
 nfpms:
   - package_name: lockenv
@@ -39,11 +40,11 @@ nfpms:
       - deb
       - rpm
     contents:
-      - src: completions/lockenv.bash
+      - src: ./completions/lockenv.bash
         dst: /usr/share/bash-completion/completions/lockenv
-      - src: completions/_lockenv
+      - src: ./completions/_lockenv
         dst: /usr/share/zsh/vendor-completions/_lockenv
-      - src: completions/lockenv.fish
+      - src: ./completions/lockenv.fish
         dst: /usr/share/fish/vendor_completions.d/lockenv.fish
 
 homebrew_casks:
@@ -55,9 +56,9 @@ homebrew_casks:
     description: Simple, CLI-friendly secret storage
     license: MIT
     completions:
-      bash: completions/lockenv.bash
-      zsh: completions/_lockenv
-      fish: completions/lockenv.fish
+      bash: ./completions/lockenv.bash
+      zsh: ./completions/_lockenv
+      fish: ./completions/lockenv.fish
 
 changelog:
   sort: asc
