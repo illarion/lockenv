@@ -1,4 +1,4 @@
-.PHONY: build test cover clean completions install
+.PHONY: build test cover clean completions install release
 
 BINARY := lockenv
 
@@ -19,6 +19,9 @@ completions: build
 	./$(BINARY) completion bash > completions/lockenv.bash
 	./$(BINARY) completion zsh > completions/_lockenv
 	./$(BINARY) completion fish > completions/lockenv.fish
+	./$(BINARY) completion powershell > completions/lockenv.ps1
+
+release: completions
 
 clean:
 	rm -f $(BINARY)

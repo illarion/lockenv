@@ -2,7 +2,7 @@ _lockenv() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init lock unlock rm ls status passwd diff compact help completion"
+    local commands="init lock unlock rm ls status passwd diff compact keyring help completion"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -34,11 +34,14 @@ _lockenv() {
             files=$(lockenv ls 2>/dev/null | grep -E '^\s+[.*]' | sed 's/^.*[.*] //' | sed 's/ (.*//')
             COMPREPLY=($(compgen -W "$files" -- "$cur"))
             ;;
+        keyring)
+            COMPREPLY=($(compgen -W "save delete status" -- "$cur"))
+            ;;
         help)
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
             ;;
         completion)
-            COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
+            COMPREPLY=($(compgen -W "bash zsh fish powershell" -- "$cur"))
             ;;
     esac
 }

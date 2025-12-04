@@ -12,6 +12,7 @@ _lockenv() {
         'passwd:Change vault password'
         'diff:Compare vault contents with local files'
         'compact:Compact vault to reclaim disk space'
+        'keyring:Manage password in OS keyring'
         'help:Show help for a command'
         'completion:Generate shell completions'
     )
@@ -43,11 +44,14 @@ _lockenv() {
                 rm)
                     _arguments '*:vault file:_lockenv_vault_files'
                     ;;
+                keyring)
+                    _values 'subcommand' save delete status
+                    ;;
                 help)
                     _describe -t commands 'lockenv commands' commands
                     ;;
                 completion)
-                    _values 'shell' bash zsh fish
+                    _values 'shell' bash zsh fish powershell
                     ;;
             esac
             ;;

@@ -50,6 +50,7 @@ Download pre-built binaries from [GitHub Releases](https://github.com/illarion/l
 Available for:
 - Linux (amd64, arm64)
 - macOS (amd64, arm64)
+- Windows (amd64, arm64)
 
 ### Go Install
 
@@ -72,6 +73,9 @@ eval "$(lockenv completion zsh)"
 
 # Fish - add to ~/.config/fish/config.fish
 lockenv completion fish | source
+
+# PowerShell - add to $PROFILE
+lockenv completion powershell | Out-String | Invoke-Expression
 ```
 
 ## Quick Start

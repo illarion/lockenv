@@ -1,6 +1,6 @@
 # lockenv fish completions
 
-set -l commands init lock unlock rm ls status passwd diff compact help completion
+set -l commands init lock unlock rm ls status passwd diff compact keyring help completion
 
 complete -c lockenv -f
 
@@ -14,6 +14,7 @@ complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a status -d 
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a passwd -d 'Change vault password'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a diff -d 'Compare vault with local'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a compact -d 'Compact vault'
+complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a keyring -d 'Manage password in OS keyring'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a help -d 'Show help'
 complete -c lockenv -n "not __fish_seen_subcommand_from $commands" -a completion -d 'Generate completions'
 
@@ -28,8 +29,11 @@ complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l force -d 'Overwri
 complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l keep-local -d 'Keep local versions'
 complete -c lockenv -n "__fish_seen_subcommand_from unlock" -l keep-both -d 'Keep both versions'
 
+# keyring subcommands
+complete -c lockenv -n "__fish_seen_subcommand_from keyring" -a "save delete status"
+
 # help completions
 complete -c lockenv -n "__fish_seen_subcommand_from help" -a "$commands"
 
 # completion completions
-complete -c lockenv -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"
+complete -c lockenv -n "__fish_seen_subcommand_from completion" -a "bash zsh fish powershell"

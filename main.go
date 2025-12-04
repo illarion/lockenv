@@ -162,7 +162,7 @@ func runCompact(ctx context.Context, args []string) {
 
 func runCompletion(_ context.Context, args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: lockenv completion <bash|zsh|fish>")
+		fmt.Fprintln(os.Stderr, "Usage: lockenv completion <bash|zsh|fish|powershell>")
 		os.Exit(1)
 	}
 	cmd.Completion(args[0])
