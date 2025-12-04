@@ -13,7 +13,7 @@ lockenv provides a secure way to store sensitive files (like `.env` files, confi
 | Feature         | lockenv              | git-crypt                | sops                      |
 |-----------------|----------------------|--------------------------|---------------------------|
 | Format          | Single vault file    | Transparent per-file     | YAML/JSON native          |
-| Auth            | Password             | GPG keys                 | KMS/PGP                   |
+| Auth            | Password + Keyring   | GPG keys                 | KMS/PGP                   |
 | Git integration | Manual (lock/unlock) | Transparent (git filter) | Manual                    |
 | Setup           | `lockenv init`       | GPG key exchange         | KMS/key config            |
 | Best for        | Simple .env/config   | Large teams, many devs   | Cloud infra, key rotation |
@@ -336,6 +336,24 @@ $ lockenv compact
 Compacted: 45.2 KB -> 12.1 KB
 ```
 
+### `lockenv keyring`
+Manages password storage in the OS keyring.
+
+```bash
+# Save password to keyring
+$ lockenv keyring save
+Enter password:
+Password saved to keyring
+
+# Check if password is stored
+$ lockenv keyring status
+Password: stored in keyring
+
+# Remove password from keyring
+$ lockenv keyring delete
+Password removed from keyring
+```
+
 ## Workflow Example
 
 1. **Initial setup**
@@ -421,7 +439,70 @@ export LOCKENV_PASSWORD="your-password"
 lockenv unlock
 ```
 
-**Security warning:** Environment variables may be visible to other processes on the system (via `/proc/<pid>/environ` on Linux or process inspection tools). Use this feature only in isolated CI/CD environments where process inspection by other users is not a concern. For interactive use, prefer the terminal prompt.
+**Security warning:** Environment variables may be visible to other processes on the system (via `/proc/<pid>/environ` on Linux or process inspection tools). Use this feature only in isolated CI/CD environments where process inspection by other users is not a concern. For interactive use, prefer the terminal prompt or OS keyring.
+
+## OS Keyring Integration
+
+lockenv can store your password in the operating system's secure keyring, eliminating password prompts for daily use.
+
+**Supported backends:**
+- macOS: Keychain
+- Linux: GNOME Keyring, KDE Wallet, or any Secret Service implementation
+- Windows: Windows Credential Manager
+
+### Automatic Integration
+
+After `init` or `unlock`, lockenv offers to save your password:
+
+```bash
+$ lockenv unlock
+Enter password:
+unlocked: .env
+
+Save password to keyring? [y/N]: y
+Password saved to keyring
+```
+
+Once saved, subsequent commands use the keyring automatically:
+
+```bash
+$ lockenv unlock
+unlocked: .env  # No password prompt!
+```
+
+### Manual Management
+
+```bash
+# Save password to keyring (verifies password first)
+$ lockenv keyring save
+Enter password:
+Password saved to keyring
+
+# Check keyring status
+$ lockenv keyring status
+Password: stored in keyring
+
+# Remove from keyring
+$ lockenv keyring delete
+Password removed from keyring
+```
+
+### Stale Password Handling
+
+If the vault password changes but the keyring has the old password, lockenv automatically detects this and prompts for the correct password:
+
+```bash
+$ lockenv unlock
+Warning: keyring password is incorrect, removing stale entry
+Enter password:
+unlocked: .env
+```
+
+### Security Notes
+
+- Passwords are stored using your OS's native secure storage
+- Each vault has a unique ID - moving `.lockenv` files preserves keyring association
+- The keyring is optional - lockenv works without it
 
 ## CI/CD Integration
 
