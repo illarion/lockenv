@@ -10,13 +10,13 @@ lockenv provides a secure way to store sensitive files (like `.env` files, confi
 
 ## How is this different?
 
-| Feature | lockenv | git-crypt | sops |
-|---------|---------|-----------|------|
-| Format | Single vault file | Transparent per-file | YAML/JSON native |
-| Auth | Password (PBKDF2) | GPG keys | KMS/PGP/age |
-| Git integration | Manual (lock/unlock) | Transparent (git filter) | Manual |
-| Setup | `lockenv init` | GPG key exchange | KMS/key config |
-| Best for | Simple .env/config | Large teams, many devs | Cloud infra, key rotation |
+| Feature         | lockenv              | git-crypt                | sops                      |
+|-----------------|----------------------|--------------------------|---------------------------|
+| Format          | Single vault file    | Transparent per-file     | YAML/JSON native          |
+| Auth            | Password             | GPG keys                 | KMS/PGP                   |
+| Git integration | Manual (lock/unlock) | Transparent (git filter) | Manual                    |
+| Setup           | `lockenv init`       | GPG key exchange         | KMS/key config            |
+| Best for        | Simple .env/config   | Large teams, many devs   | Cloud infra, key rotation |
 
 ## Installation
 
@@ -57,6 +57,23 @@ Available for:
 go install github.com/illarion/lockenv@latest
 ```
 
+## Shell Completions
+
+Shell completions are **automatically installed** when using Homebrew, deb, or rpm packages.
+
+For manual installation (binary download or `go install`):
+
+```bash
+# Bash - add to ~/.bashrc
+eval "$(lockenv completion bash)"
+
+# Zsh - add to ~/.zshrc
+eval "$(lockenv completion zsh)"
+
+# Fish - add to ~/.config/fish/config.fish
+lockenv completion fish | source
+```
+
 ## Quick Start
 
 ```bash
@@ -68,6 +85,48 @@ lockenv lock .env config/secrets.json
 
 # Later, unlock (decrypt and restore) files with your password
 lockenv unlock
+```
+
+## Git Integration
+
+lockenv is designed for version control: ignore your sensitive files, commit only the encrypted `.lockenv` vault.
+
+### Basic Setup
+
+Add to your `.gitignore`:
+
+```gitignore
+# Sensitive files - these are stored encrypted in .lockenv
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Keep the encrypted vault (negation pattern)
+!.lockenv
+```
+
+The `!.lockenv` negation ensures the vault is tracked even if broader patterns (like `.*`) would exclude it.
+
+### Project-Specific Examples
+
+**Some software project:**
+```gitignore
+.env
+.env.local
+.env.production
+config/secrets.json
+!.lockenv
+```
+
+**Terraform project:**
+```gitignore
+*.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+!.lockenv
 ```
 
 ## Commands
@@ -396,90 +455,6 @@ deploy:
     LOCKENV_PASSWORD: $LOCKENV_PASSWORD
 ```
 
-## Shell Completions
-
-Shell completions are **automatically installed** when using Homebrew, deb, or rpm packages.
-
-For manual installation (binary download or `go install`):
-
-```bash
-# Bash - add to ~/.bashrc
-eval "$(lockenv completion bash)"
-
-# Zsh - add to ~/.zshrc
-eval "$(lockenv completion zsh)"
-
-# Fish - add to ~/.config/fish/config.fish
-lockenv completion fish | source
-```
-
-## Git Integration
-
-lockenv is designed for version control: ignore your sensitive files, commit only the encrypted `.lockenv` vault.
-
-### Basic Setup
-
-Add to your `.gitignore`:
-
-```gitignore
-# Sensitive files - these are stored encrypted in .lockenv
-.env
-.env.*
-*.key
-*.pem
-secrets/
-
-# Keep the encrypted vault (negation pattern)
-!.lockenv
-```
-
-The `!.lockenv` negation ensures the vault is tracked even if broader patterns (like `.*`) would exclude it.
-
-### Project-Specific Examples
-
-**Node.js:**
-```gitignore
-.env
-.env.local
-.env.production
-config/secrets.json
-!.lockenv
-```
-
-**Python:**
-```gitignore
-.env
-*.pem
-secrets.yaml
-config/credentials.py
-!.lockenv
-```
-
-**Go:**
-```gitignore
-.env
-config/secrets.yaml
-*.key
-!.lockenv
-```
-
-**Ruby/Rails:**
-```gitignore
-.env
-config/master.key
-config/credentials.yml.enc
-config/secrets.yml
-!.lockenv
-```
-
-**Terraform:**
-```gitignore
-*.tfvars
-terraform.tfstate
-terraform.tfstate.backup
-.terraform/
-!.lockenv
-```
 
 ## Limitations
 
