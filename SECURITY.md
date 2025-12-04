@@ -192,34 +192,7 @@ func (s *Storage) StoreFile(path string, encData []byte) error {
 }
 ```
 
-## Security Checklist
-
-### Development
-- [x] Use Go's `crypto` packages only
-- [x] Never implement custom cryptography
-- [x] Clear sensitive memory after use
-- [x] Use constant-time comparisons
-- [x] Validate all inputs
-- [x] Handle errors securely
-- [x] Use BBolt transactions for atomicity
-
-### Operations
-- [ ] Use strong passwords (recommend 20+ characters)
-- [ ] Store .lockenv files in version control
-- [ ] Never commit unencrypted files
-- [ ] Regularly update lockenv tool
-- [ ] Monitor for security advisories
-- [ ] Use `bbolt check` to verify database integrity
-
-### Testing
-- [ ] Test with various file sizes
-- [ ] Verify tamper detection works
-- [ ] Check memory is cleared properly
-- [ ] Test error conditions
-- [ ] Verify no information leakage
-- [ ] Test database corruption recovery
-
-## BBolt Security Considerations
+## Security Considerations
 
 ### Unencrypted Index
 
@@ -258,7 +231,3 @@ The salt is stored unencrypted in the config bucket because:
 4. [BBolt Documentation](https://github.com/etcd-io/bbolt)
 5. [OWASP Cryptographic Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html)
 
-## Version History
-
-- **v2.0** - Migrated to BBolt storage backend
-- **v1.0** - Initial design with custom binary format
