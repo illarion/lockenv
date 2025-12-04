@@ -418,10 +418,10 @@ func (s *Storage) Compact() error {
 		return fmt.Errorf("failed to backup original: %w", err)
 	}
 	if err := os.Rename(tmpPath, srcPath); err != nil {
-		os.Rename(backupPath, srcPath) // rollback
+		_ = os.Rename(backupPath, srcPath) // rollback
 		return fmt.Errorf("failed to replace database: %w", err)
 	}
-	os.Remove(backupPath)
+	_ = os.Remove(backupPath)
 
 	// Reopen database
 	s.db, err = bolt.Open(srcPath, 0600, nil)

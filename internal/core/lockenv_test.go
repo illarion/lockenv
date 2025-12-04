@@ -262,7 +262,7 @@ func TestForget_DotSlashPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get current directory: %v", err)
 	}
-	defer os.Chdir(origDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Failed to change to test directory: %v", err)
@@ -810,7 +810,7 @@ func TestUnlock_VaultCopyHasSecurePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get working directory: %v", err)
 	}
-	defer os.Chdir(oldDir)
+	defer func() { _ = os.Chdir(oldDir) }()
 
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Failed to change to temp directory: %v", err)

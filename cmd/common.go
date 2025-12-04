@@ -63,7 +63,7 @@ func GetPasswordWithRetry(prompt string, vaultID string, verify func([]byte) err
 	if verifyErr == core.ErrWrongPassword && source == SourceKeyring && IsTerminal() {
 		crypto.ClearBytes(password)
 		fmt.Fprintln(os.Stderr, "Warning: keyring password is incorrect, removing stale entry")
-		keyring.DeletePassword(vaultID)
+		_ = keyring.DeletePassword(vaultID)
 
 		password, err = core.ReadPassword(prompt)
 		if err != nil {
@@ -81,16 +81,6 @@ func GetPasswordWithRetry(prompt string, vaultID string, verify func([]byte) err
 func GetPassword(prompt string) ([]byte, error) {
 	password, _, err := GetPasswordWithSource(prompt, "")
 	return password, err
-}
-
-// GetPasswordOrExit is like GetPassword but exits on error
-func GetPasswordOrExit(prompt string) []byte {
-	password, err := GetPassword(prompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(1)
-	}
-	return password
 }
 
 // GetPasswordForInit retrieves password for init command

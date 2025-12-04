@@ -679,7 +679,7 @@ func (l *LockEnv) Unlock(ctx context.Context, password []byte, strategy MergeStr
 
 		// Set modification time
 		if err := os.Chtimes(platformPath, time.Now(), file.ModTime); err != nil {
-			// Non-critical error
+			fmt.Printf("warning: %s: cannot set modification time: %v\n", validPath, err)
 		}
 
 		// Clear sensitive data from memory
@@ -788,6 +788,7 @@ func (l *LockEnv) RemoveFiles(ctx context.Context, patterns []string, password [
 				// Remove encrypted file data
 				if err := db.RemoveFile(storedPath); err != nil {
 					// Ignore error - file might not be sealed yet
+					fmt.Printf("warning: failed to remove %s from vault: %v\n", storedPath, err)
 				}
 				removed++
 				fmt.Printf("removed: %s from vault\n", storedPath)

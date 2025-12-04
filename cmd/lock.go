@@ -108,7 +108,7 @@ func LockAll(ctx context.Context, remove bool, force bool) {
 		}
 
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		response = strings.ToLower(strings.TrimSpace(response))
 
 		// Default is Yes, so only cancel on explicit 'n' or 'no'

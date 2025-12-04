@@ -192,7 +192,7 @@ func readChoice() (string, error) {
 		}
 		return strings.ToLower(strings.TrimSpace(input)), nil
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	buf := make([]byte, 1)
 	_, err = os.Stdin.Read(buf)
