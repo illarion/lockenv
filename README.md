@@ -193,15 +193,7 @@ removed: config/dev.env from vault
 ```
 
 ### `lockenv ls`
-Lists all files stored in the vault. Does not require a password.
-
-```bash
-$ lockenv ls
-Files in .lockenv:
-  .env (1.2 KB)
-  config/dev.env (456 bytes)
-  config/prod.env (523 bytes)
-```
+Alias for `lockenv status`. Shows comprehensive vault status.
 
 ### `lockenv status`
 Shows comprehensive vault status including statistics, file states, and detailed information. Does not require a password.
@@ -326,16 +318,13 @@ Compacted: 45.2 KB -> 12.1 KB
 
    # Check vault status
    lockenv status
-
-   # List all files without password
-   lockenv ls
    ```
 
 ## Security Considerations
 
 - **Password Management**: lockenv does not store your password. If you lose it, you cannot decrypt your files.
 - **Encryption**: Uses industry-standard encryption (AES-256-GCM) with PBKDF2 key derivation for all file contents.
-- **Metadata Visibility**: File paths, sizes, and modification times are visible without authentication via `lockenv ls` and `lockenv status`. If file paths themselves are sensitive, use generic names like `config1.enc`.
+- **Metadata Visibility**: File paths, sizes, and modification times are visible without authentication via `lockenv status`. If file paths themselves are sensitive, use generic names like `config1.enc`.
 - **Memory Safety**: Sensitive data is cleared from memory after use.
 - **Version Control**: Only commit the `.lockenv` file, never commit unencrypted sensitive files.
 
@@ -352,16 +341,87 @@ lockenv unlock
 
 **Security warning:** Environment variables may be visible to other processes on the system (via `/proc/<pid>/environ` on Linux or process inspection tools). Use this feature only in isolated CI/CD environments where process inspection by other users is not a concern. For interactive use, prefer the terminal prompt.
 
-## Gitignore
+## Shell Completions
 
-Add these entries to your `.gitignore`:
+Shell completions are **automatically installed** when using Homebrew, deb, or rpm packages.
+
+For manual installation (binary download or `go install`):
+
+```bash
+# Bash - add to ~/.bashrc
+eval "$(lockenv completion bash)"
+
+# Zsh - add to ~/.zshrc
+eval "$(lockenv completion zsh)"
+
+# Fish - add to ~/.config/fish/config.fish
+lockenv completion fish | source
+```
+
+## Git Integration
+
+lockenv is designed for version control: ignore your sensitive files, commit only the encrypted `.lockenv` vault.
+
+### Basic Setup
+
+Add to your `.gitignore`:
 
 ```gitignore
-# Sensitive files (add your specific files)
+# Sensitive files - these are stored encrypted in .lockenv
 .env
+.env.*
 *.key
 *.pem
+secrets/
 
-# Keep the encrypted file
+# Keep the encrypted vault (negation pattern)
+!.lockenv
+```
+
+The `!.lockenv` negation ensures the vault is tracked even if broader patterns (like `.*`) would exclude it.
+
+### Project-Specific Examples
+
+**Node.js:**
+```gitignore
+.env
+.env.local
+.env.production
+config/secrets.json
+!.lockenv
+```
+
+**Python:**
+```gitignore
+.env
+*.pem
+secrets.yaml
+config/credentials.py
+!.lockenv
+```
+
+**Go:**
+```gitignore
+.env
+config/secrets.yaml
+*.key
+!.lockenv
+```
+
+**Ruby/Rails:**
+```gitignore
+.env
+config/master.key
+config/credentials.yml.enc
+config/secrets.yml
+!.lockenv
+```
+
+**Terraform:**
+```gitignore
+*.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
 !.lockenv
 ```

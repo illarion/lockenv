@@ -39,6 +39,8 @@ func main() {
 		runStatus(ctx, os.Args[2:])
 	case "compact":
 		runCompact(ctx, os.Args[2:])
+	case "completion":
+		runCompletion(ctx, os.Args[2:])
 	case "help", "-h", "--help":
 		if len(os.Args) <= 2 {
 			printUsage()
@@ -113,7 +115,7 @@ func runLs(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 
-	cmd.Ls(ctx)
+	cmd.Status(ctx)
 }
 
 func runPasswd(_ context.Context, args []string) {
@@ -156,6 +158,14 @@ func runCompact(ctx context.Context, args []string) {
 	cmd.Compact(ctx)
 }
 
+func runCompletion(_ context.Context, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: lockenv completion <bash|zsh|fish>")
+		os.Exit(1)
+	}
+	cmd.Completion(args[0])
+}
+
 func printUsage() {
 	fmt.Println("lockenv - Simple, CLI-friendly secret storage")
 	fmt.Println()
@@ -167,11 +177,11 @@ func printUsage() {
 	fmt.Println("  lock        Encrypt and store files in the vault")
 	fmt.Println("  unlock      Decrypt and restore files from the vault")
 	fmt.Println("  rm          Remove files from the vault")
-	fmt.Println("  ls          List files stored in the vault")
-	fmt.Println("  status      Show comprehensive vault status")
+	fmt.Println("  ls, status  Show comprehensive vault status")
 	fmt.Println("  passwd      Change vault password")
 	fmt.Println("  diff        Compare vault contents with local files")
 	fmt.Println("  compact     Compact vault to reclaim disk space")
+	fmt.Println("  completion  Generate shell completions")
 	fmt.Println("  help        Show help for a command")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -252,11 +262,7 @@ func printCommandHelp(command string) {
 	case "ls":
 		fmt.Println("lockenv ls")
 		fmt.Println()
-		fmt.Println("Lists all files stored in the vault.")
-		fmt.Println("Does not require a password.")
-		fmt.Println()
-		fmt.Println("Example:")
-		fmt.Println("  lockenv ls")
+		fmt.Println("Alias for 'lockenv status'. Shows comprehensive vault status.")
 	case "passwd":
 		fmt.Println("lockenv passwd")
 		fmt.Println()
@@ -298,6 +304,20 @@ func printCommandHelp(command string) {
 		fmt.Println()
 		fmt.Println("Example:")
 		fmt.Println("  lockenv compact")
+	case "completion":
+		fmt.Println("lockenv completion <bash|zsh|fish>")
+		fmt.Println()
+		fmt.Println("Outputs shell completion script for the specified shell.")
+		fmt.Println()
+		fmt.Println("Setup:")
+		fmt.Println("  # Bash - add to ~/.bashrc")
+		fmt.Println("  eval \"$(lockenv completion bash)\"")
+		fmt.Println()
+		fmt.Println("  # Zsh - add to ~/.zshrc")
+		fmt.Println("  eval \"$(lockenv completion zsh)\"")
+		fmt.Println()
+		fmt.Println("  # Fish - add to ~/.config/fish/config.fish")
+		fmt.Println("  lockenv completion fish | source")
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		printUsage()

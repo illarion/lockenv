@@ -5,6 +5,9 @@ BINARY := lockenv
 build:
 	go build -o $(BINARY)
 
+install:
+	go install
+
 test:
 	go test ./...
 
