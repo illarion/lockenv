@@ -51,7 +51,7 @@ nfpms:
         file_info:
           mode: 0644
 
-homebrew_casks:
+brews:
   - repository:
       owner: illarion
       name: homebrew-tap
@@ -59,10 +59,10 @@ homebrew_casks:
     homepage: https://github.com/illarion/lockenv
     description: Simple, CLI-friendly secret storage
     license: MIT
-    completions:
-      bash: ./completions/lockenv.bash
-      zsh: ./completions/_lockenv
-      fish: ./completions/lockenv.fish
+    extra_install: |-
+      bash_completion.install "completions/lockenv.bash" => "lockenv"
+      zsh_completion.install "completions/_lockenv"
+      fish_completion.install "completions/lockenv.fish"
 
 changelog:
   sort: asc
